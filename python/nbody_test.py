@@ -60,7 +60,7 @@ def test_advance_pos():
     
     np.testing.assert_almost_equal(pos[0], np.array([\
         2 - 0.5 + 0.5 * 0.5**2,\
-        4 - 3 + -1*0.5**2\
+        4 - 3 + (-1)*0.5**2\
     ]))
     
 
