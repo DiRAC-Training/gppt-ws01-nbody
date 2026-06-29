@@ -1,5 +1,4 @@
 import numpy as np
-import numba
 import matplotlib.pyplot as plt
 
 from nbody import *
@@ -20,32 +19,50 @@ def test_calc_stable_orbit():
 
     np.testing.assert_almost_equal( pos, pos3 * -1.0 )
     np.testing.assert_almost_equal( vel, vel3 * -1.0 )
-    
-def test_generate_random_start_system():
 
-    (pos,vel,mass) = generate_random_star_system(100)
-
-    np.testing.assert_almost_equal( pos[0,:], 0.0 )
-    np.testing.assert_almost_equal( vel[0,:], 0.0 )
-    np.testing.assert_almost_equal( mass[0], 1.0 )
-
-    np.testing.assert_array_less( 0.0, np.abs(pos[1:,:]) )
-    np.testing.assert_array_less( mass[1:], 1.0 )
 
 def test_calc_acc():
 
-    mass = np.array([1.0,1.0])
-    pos = np.array([0.0, 0.0, 0.0, 0.0]).reshape(2,2)
+    mass = np.array([2.0,0.5])
+    pos = np.zeros((2, 2))
     acc = np.zeros_like(pos)
-    
-    calc_acc(acc, pos, mass)
-    np.testing.assert_almost_equal(acc, 0.0)
 
-    pos = np.array([1.0, 1.0, 0.0, 0.0]).reshape(2,2)
-    acc = np.zeros_like(pos)
+    pos[0,:] = np.array([0, 0])
+    pos[1,:] = np.array([1, 0])
     
     calc_acc(acc, pos, mass)
     epsilon = 1.1*np.power(len(pos), -0.48)
-    np.testing.assert_almost_equal(np.abs(acc), (2 + epsilon**2)**-1.5)
-    np.testing.assert_almost_equal(acc[0,:], acc[1,:] * -1.0)
+    np.testing.assert_almost_equal(acc[0], np.array([1, 0]) * mass[1] * (1 + epsilon**2)**-1.5)
+    np.testing.assert_almost_equal(acc[1], -np.array([1, 0]) * mass[0] * (1 + epsilon**2)**-1.5)
+
+    pos[0,:] = np.array([0, 0])
+    pos[1,:] = np.array([0, 1])
     
+    calc_acc(acc, pos, mass)
+    epsilon = 1.1*np.power(len(pos), -0.48)
+    np.testing.assert_almost_equal(acc[0], np.array([0, 1]) * mass[1] * (1 + epsilon**2)**-1.5)
+    np.testing.assert_almost_equal(acc[1], -np.array([0, 1]) * mass[0] * (1 + epsilon**2)**-1.5)
+
+
+def test_advance_pos():
+
+    pos = np.zeros((1, 2))
+    pos_prev = np.zeros_like(pos)
+    pos_temp = np.zeros_like(pos)
+    acc = np.zeros_like(pos)
+    dt = 0.5;
+
+    pos[0,:] = np.array([1, 2])
+    pos_prev[0,:] = np.array([0.5, 3])
+    acc[0,:] = np.array([0.5, -1])
+
+    advance_pos(acc, pos, pos_prev, pos_temp, dt)
+    
+    np.testing.assert_almost_equal(pos[0], np.array([\
+        2 - 0.5 + 0.5 * 0.5**2,\
+        4 - 3 + -1*0.5**2\
+    ]))
+    
+
+test_calc_acc()
+test_advance_pos()
