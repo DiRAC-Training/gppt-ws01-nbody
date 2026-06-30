@@ -4,6 +4,7 @@ module nbody_simulation
 
     real(wp), parameter :: PI = 3.14159265358979323846_wp
     real(wp), parameter :: N_YEARS = 0.1_wp
+    integer :: file_unit, ios
 
 contains
 
@@ -137,6 +138,7 @@ contains
         real(wp), allocatable :: pos(:,:), vel(:,:), mass(:)
         real(wp), allocatable :: acc(:,:), pos_temp(:,:), pos_prev(:,:)
         integer :: n, count_rate, count_start, count_end
+        integer :: i
 
         if (is_solar_system) then
             print *, "Running regular solar system"
@@ -170,6 +172,12 @@ contains
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
             t = t + dt
         end do
+
+        if (ios == 0) then
+            do i = 1, n
+                write(file_unit, '(F12.6, A, F12.6)') pos(i, 1), ',', pos(i, 2)
+            end do
+        end if
 
         call system_clock(count_end)
         completion_time = real(count_end - count_start, wp) / real(count_rate, wp)
@@ -280,9 +288,16 @@ program main
     integer, dimension(5) :: n_particle_range = [8, 16, 32, 64, 128]
     real(wp), dimension(5) :: runtimes
 
+    open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
+    if (ios /= 0) then
+        print *, "Error opening trajectory.csv"
+    end if
+
     do i = 1, 5
         runtimes(i) = run_sim(.false., .false., n_particle_range(i))
     end do
+        
+    if (ios == 0) close(file_unit)
 
     print *, "Particle counts:"
     print *, n_particle_range
