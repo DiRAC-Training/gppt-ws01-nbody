@@ -2,5 +2,6 @@
 Basic build instructions:
 
 ```bash
-gfortran nbody.f90 -o main
+gfortran -cpp -DMAIN nbody.f90 -o main
+gfortran -cpp -DTEST nbody.f90 -o test
 ```

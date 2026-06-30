@@ -183,8 +183,94 @@ contains
         deallocate(pos, vel, mass, acc, pos_temp, pos_prev)
     end function run_sim
 
+    subroutine assert_almost_equal(a, b, label)
+        real(wp), intent(in) :: a(:,:), b(:,:)
+        character(len=*), intent(in) :: label
+        real(wp), parameter :: tol = 1e-6
+        if (any(abs(a - b) > tol)) then
+            print *, "Assertion Failed: ", label
+            print *, "Expected:", b
+            print *, "Actual:", a
+            stop 1
+        else
+            print *, "Assertion Passed: ", label
+        end if
+    end subroutine assert_almost_equal
+
+    subroutine test_calc_stable_orbit()
+        real(wp) :: r(1), theta(1)
+        real(wp) :: pos(1, 2), vel(1, 2)
+        real(wp) :: pos2(1, 2), vel2(1, 2)
+        real(wp) :: pos3(1, 2), vel3(1, 2)
+
+        r = 1.0_wp
+        theta = 0.0_wp
+        call calc_stable_orbit(r, theta, pos, vel)
+        call assert_almost_equal(pos, reshape([0.0_wp, 1.0_wp], [1_wp, 2_wp]), "test_calc_stable_orbit pos 1")
+        call assert_almost_equal(vel, reshape([-1.0_wp, 0.0_wp], [1_wp, 2_wp]), "test_calc_stable_orbit vel 1")
+
+        theta = 2.0_wp * PI
+        call calc_stable_orbit(r, theta, pos2, vel2)
+        call assert_almost_equal(pos, pos2, "test_calc_stable_orbit pos 2")
+        call assert_almost_equal(vel, vel2, "test_calc_stable_orbit vel 2")
+
+        theta = PI
+        call calc_stable_orbit(r, theta, pos3, vel3)
+        call assert_almost_equal(pos, -1.0 * pos3, "test_calc_stable_orbit pos 3")
+        call assert_almost_equal(vel, -1.0 * vel3, "test_calc_stable_orbit vel 3")
+    end subroutine test_calc_stable_orbit
+
+    subroutine test_calc_acc()
+        real(wp) :: mass(2)
+        real(wp) :: pos(2, 2)
+        real(wp) :: acc(2, 2)
+        real(wp) :: epsilon
+        real(wp) :: expected_acc(2, 2)
+
+        mass = [2.0, 0.5]
+        pos(1, :) = [0.0, 0.0]
+        pos(2, :) = [1.0, 0.0]
+        
+        call calc_acc(acc, pos, mass)
+        epsilon = 1.1 * (2.0**(-0.48))
+        
+        expected_acc(1, :) = [1.0, 0.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
+        expected_acc(2, :) = -[1.0, 0.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
+        call assert_almost_equal(acc, expected_acc, "test_calc_acc horizontal")
+
+        pos(1, :) = [0.0, 0.0]
+        pos(2, :) = [0.0, 1.0]
+        
+        call calc_acc(acc, pos, mass)
+        expected_acc(1, :) = [0.0, 1.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
+        expected_acc(2, :) = -[0.0, 1.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
+        call assert_almost_equal(acc, expected_acc, "test_calc_acc vertical")
+    end subroutine test_calc_acc
+
+    subroutine test_advance_pos()
+        real(wp) :: pos(1, 2)
+        real(wp) :: pos_prev(1, 2)
+        real(wp) :: pos_temp(1, 2)
+        real(wp) :: acc(1, 2)
+        real(wp) :: dt
+        real(wp) :: expected_pos(1, 2)
+
+        dt = 0.5
+        pos(1, :) = [1.0, 2.0]
+        pos_prev(1, :) = [0.5, 3.0]
+        acc(1, :) = [0.5, -1.0]
+
+        call advance_pos(acc, pos, pos_prev, pos_temp, dt)
+        
+        expected_pos(1, 1) = 2.0 - 0.5 + 0.5 * 0.5**2
+        expected_pos(1, 2) = 4.0 - 3.0 + (-1.0) * 0.5**2
+        
+        call assert_almost_equal(pos, expected_pos, "test_advance_pos")
+    end subroutine test_advance_pos
+    
 end module nbody_simulation
 
+#ifdef MAIN
 program main
     
     use nbody_simulation
@@ -204,3 +290,17 @@ program main
     print *, runtimes
 
 end program main
+#endif
+
+#ifdef TEST
+program test
+    
+    use nbody_simulation
+    implicit none
+
+    call test_calc_stable_orbit()
+    call test_calc_acc()
+    call test_advance_pos()
+
+end program test
+#endif
