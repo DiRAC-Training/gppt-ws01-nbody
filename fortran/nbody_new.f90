@@ -186,15 +186,16 @@ contains
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
 
-        call system_clock(count_start, count_rate)
-
         t = 0.0_wp
-        !$omp target data map(tofrom: pos, pos_prev) map(to:mass) map(alloc: acc, pos_temp)
+
+        !$omp target data map(tofrom: pos) map(to:mass, pos_prev) map(alloc: acc, pos_temp)
+        call system_clock(count_start, count_rate)
         do while (t < total_time)
             call calc_acc(acc, pos, mass)
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
             t = t + dt
         end do
+        call system_clock(count_end)
         !$omp end target data
 
         if (ios == 0) then
@@ -203,7 +204,6 @@ contains
             end do
         end if
 
-        call system_clock(count_end)
         completion_time = real(count_end - count_start, wp) / real(count_rate, wp)
         
         print '(A, F10.4, A)', "Time to complete: ", completion_time, " s"
