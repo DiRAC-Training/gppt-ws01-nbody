@@ -103,7 +103,9 @@ contains
         n = size(pos, 1)
         epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
         acc = 0.0_wp
-
+        !$omp target update to(acc)
+        
+        !$omp target teams distribute parallel do
         do i = 1, n
             do j = 1, n
                 dx = pos(j,1) - pos(i,1)
@@ -114,6 +116,7 @@ contains
                 acc(i,2) = acc(i,2) + dy * mass(j) * inv_dist_cube
             end do
         end do
+        !$omp end target teams distribute parallel do
     end subroutine calc_acc
 
     subroutine advance_pos(acc, pos, pos_prev, pos_temp, dt)
@@ -122,10 +125,17 @@ contains
         real(wp), intent(inout) :: pos_prev(:,:)
         real(wp), intent(out) :: pos_temp(:,:)
         real(wp), intent(in) :: dt
+        integer :: i, n
 
-        pos_temp = pos
-        pos = 2.0_wp * pos - pos_prev + acc * dt**2
-        pos_prev = pos_temp
+        n = size(pos, 1)
+
+        !$omp target teams distribute parallel do
+        do i=1,n
+            pos_temp(i,:) = pos(i,:)
+            pos(i,:) = 2.0_wp * pos(i,:) - pos_prev(i,:) + acc(i,:) * dt**2
+            pos_prev(i,:) = pos_temp(i,:)
+        end do
+        !$omp end target teams distribute parallel do
     end subroutine advance_pos
 
     function run_sim(is_solar_system, plot, n_particles) result(completion_time)
@@ -160,18 +170,22 @@ contains
             call generate_random_star_system(n, pos, vel, mass)
         end if
 
+        !$omp target data map(to: pos, mass) map(from: acc)
         call calc_acc(acc, pos, mass)
+        !$omp end target data
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
 
         call system_clock(count_start, count_rate)
 
         t = 0.0_wp
+        !$omp target data map(tofrom: pos, pos_prev) map(to:mass) map(alloc: acc)
         do while (t < total_time)
             call calc_acc(acc, pos, mass)
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
             t = t + dt
         end do
+        !$omp end target data
 
         if (ios == 0) then
             do i = 1, n
@@ -239,7 +253,9 @@ contains
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [1.0, 0.0]
         
+        !$omp target data map(to: pos, mass) map(from: acc)
         call calc_acc(acc, pos, mass)
+        !$omp end target data
         epsilon = 1.1 * (2.0**(-0.48))
         
         expected_acc(1, :) = [1.0, 0.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
@@ -285,15 +301,17 @@ program main
     implicit none
 
     integer :: i
-    integer, dimension(5) :: n_particle_range = [8, 16, 32, 64, 128]
-    real(wp), dimension(5) :: runtimes
+    !integer, dimension(5) :: n_particle_range = [800, 1600, 3200, 6400, 12800]
+    !real(wp), dimension(5) :: runtimes
+    integer, dimension(1) :: n_particle_range = [12800]
+    real(wp), dimension(1) :: runtimes
 
     open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
     if (ios /= 0) then
         print *, "Error opening trajectory.csv"
     end if
 
-    do i = 1, 5
+    do i = 1, 1
         runtimes(i) = run_sim(.false., .false., n_particle_range(i))
     end do
         
