@@ -169,7 +169,7 @@ contains
         end if
 
         dt = 0.01_wp
-        total_time = 10000.0_wp * dt
+        total_time = 10.0_wp * dt
 
         allocate(pos(n, 2), vel(n, 2), mass(n))
         allocate(acc(n, 2), pos_temp(n, 2), pos_prev(n, 2))
@@ -313,7 +313,7 @@ program main
     integer :: i
     !integer, dimension(5) :: n_particle_range = [800, 1600, 3200, 6400, 12800]
     !real(wp), dimension(5) :: runtimes
-    integer, dimension(1) :: n_particle_range = [12800]
+    integer, dimension(1) :: n_particle_range = [20000]
     real(wp), dimension(1) :: runtimes
 
     open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
