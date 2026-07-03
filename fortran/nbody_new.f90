@@ -1,7 +1,8 @@
 module nbody_simulation
-    use iso_fortran_env, only: wp => real64
+    ! use iso_fortran_env, only: wp => real64
     implicit none
 
+    integer, parameter :: wp = kind(1.0d0)
     real(wp), parameter :: PI = 3.14159265358979323846_wp
     real(wp), parameter :: N_YEARS = 0.1_wp
     integer :: file_unit, ios
@@ -102,8 +103,13 @@ contains
 
         n = size(pos, 1)
         epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
-        acc = 0.0_wp
-        !$omp target update to(acc)
+
+        !$omp target teams distribute parallel do
+        do i = 1, n
+          acc(i,1) = 0.0_wp
+          acc(i,2) = 0.0_wp
+        enddo
+        !$omp end target teams distribute parallel do
         
         !$omp target teams distribute parallel do
         do i = 1, n
@@ -111,7 +117,8 @@ contains
                 dx = pos(j,1) - pos(i,1)
                 dy = pos(j,2) - pos(i,2)
                 dist_sq = dx**2 + dy**2 + epsilon**2
-                inv_dist_cube = 1.0_wp / (dist_sq**1.5_wp)
+                ! inv_dist_cube = 1.0_wp / (dist_sq**1.5_wp)
+                inv_dist_cube = 1.0_wp / (dist_sq * sqrt(dist_sq))
                 acc(i,1) = acc(i,1) + dx * mass(j) * inv_dist_cube
                 acc(i,2) = acc(i,2) + dy * mass(j) * inv_dist_cube
             end do
@@ -131,9 +138,12 @@ contains
 
         !$omp target teams distribute parallel do
         do i=1,n
-            pos_temp(i,:) = pos(i,:)
-            pos(i,:) = 2.0_wp * pos(i,:) - pos_prev(i,:) + acc(i,:) * dt**2
-            pos_prev(i,:) = pos_temp(i,:)
+            pos_temp(i,1) = pos(i,1)
+            pos_temp(i,2) = pos(i,2)
+            pos(i,1) = 2.0_wp * pos(i,1) - pos_prev(i,1) + acc(i,1) * dt**2
+            pos(i,2) = 2.0_wp * pos(i,2) - pos_prev(i,2) + acc(i,2) * dt**2
+            pos_prev(i,1) = pos_temp(i,1)
+            pos_prev(i,2) = pos_temp(i,2)
         end do
         !$omp end target teams distribute parallel do
     end subroutine advance_pos
@@ -159,7 +169,7 @@ contains
         end if
 
         dt = 0.01_wp
-        total_time = 10000.0_wp * dt
+        total_time = 10.0_wp * dt
 
         allocate(pos(n, 2), vel(n, 2), mass(n))
         allocate(acc(n, 2), pos_temp(n, 2), pos_prev(n, 2))
@@ -176,15 +186,16 @@ contains
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
 
-        call system_clock(count_start, count_rate)
-
         t = 0.0_wp
-        !$omp target data map(tofrom: pos, pos_prev) map(to:mass) map(alloc: acc)
+
+        !$omp target data map(tofrom: pos) map(to:mass, pos_prev) map(alloc: acc, pos_temp)
+        call system_clock(count_start, count_rate)
         do while (t < total_time)
             call calc_acc(acc, pos, mass)
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
             t = t + dt
         end do
+        call system_clock(count_end)
         !$omp end target data
 
         if (ios == 0) then
@@ -193,7 +204,6 @@ contains
             end do
         end if
 
-        call system_clock(count_end)
         completion_time = real(count_end - count_start, wp) / real(count_rate, wp)
         
         print '(A, F10.4, A)', "Time to complete: ", completion_time, " s"
@@ -303,7 +313,7 @@ program main
     integer :: i
     !integer, dimension(5) :: n_particle_range = [800, 1600, 3200, 6400, 12800]
     !real(wp), dimension(5) :: runtimes
-    integer, dimension(1) :: n_particle_range = [12800]
+    integer, dimension(1) :: n_particle_range = [20000]
     real(wp), dimension(1) :: runtimes
 
     open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
