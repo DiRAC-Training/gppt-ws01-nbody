@@ -2,6 +2,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
 
 
 def plot(fname):
@@ -14,15 +15,21 @@ def plot(fname):
     xs = pos[:,0]
     ys = pos[:,1]
 
-    ax.plot(xs, ys)
+    ax.plot(xs, ys, '.')
 
     xmax = max(abs(np.max(xs)), abs(np.min(xs)))
     ymax = max(abs(np.max(ys)), abs(np.min(ys)))
+    xmax = 20
+    ymax = 20
     xmin = -xmax
     ymin = -ymax
     plt.xlim(xmin, xmax)
     plt.ylim(ymin, ymax)
-    plt.show()
+    plt.savefig(fname + ".png")
+    plt.close()
 
 
-plot("test.csv")
+if(len(sys.argv) > 1):
+    for fname in sys.argv[1:]: plot(fname)
+else:
+    print("Usage: ./plot.py <filename>")
