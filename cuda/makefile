@@ -1,5 +1,5 @@
 all:
-	nvcc -O3 --use_fast_math -lineinfo -g main.cu
+	nvcc -O3 -lineinfo -g -o nbody nbody.cu
 
 fmt:
 	clang-format -i --style=llvm *.cu
