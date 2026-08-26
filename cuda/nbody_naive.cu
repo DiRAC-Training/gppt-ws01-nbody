@@ -217,9 +217,7 @@ int main() {
   // transfer time
   timer.lap();
 
-  // t and dt are float values, so to ensure the final t value is as close as
-  // possible to total_time for a given dt, an offset of dt/2 is set
-  while (t < total_time - 0.5 * dt) {
+  while (t < total_time) {
 
     calc_acc<<<n_blocks, block_size>>>(acc_d.data().get(), pos_d.data().get(),
                                        mass_d.data().get(), N_PARTICLES,
@@ -232,7 +230,7 @@ int main() {
     loop_counter += 1;
     t += dt;
 
-    if (t + 0.5 * dt >= next_dump) {
+    if (t >= next_dump) {
       thrust::copy(pos_d.begin(), pos_d.end(), pos.begin());
       dump_to_file(format_fname(dump_counter), pos);
       dump_counter += 1;
@@ -242,7 +240,7 @@ int main() {
     time_per_loop = timer.lap();
     total_elapsed_us += time_per_loop;
 
-    if (t + 0.5 * dt >= next_stat_print) {
+    if (t >= next_stat_print) {
       const std::string ESC = "\x1b";
       const std::string CLEAR_SCREEN = ESC + "[2J";
       const std::string JUMP_HOME = ESC + "[H";
