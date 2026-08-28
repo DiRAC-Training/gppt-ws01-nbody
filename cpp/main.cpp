@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "util.hpp"
+
 using std::vector;
 
 typedef double real;
@@ -87,18 +89,23 @@ std::string format_fname(int count) {
 
 bool all_tests_pass();
 
-int main() {
+int main(int argc, char* argv[]) {
   const bool RUN_UNIT_TESTS = true;
-  if (RUN_UNIT_TESTS)
-    if (!all_tests_pass())
-      return -1;
+  bool tests_passed = true;
+  if (RUN_UNIT_TESTS) {
+    tests_passed = all_tests_pass(); 
+    if(!tests_passed) return -1;
+  }
 
   // Parameters
-
-  int seed = 42;
-  uint N_PARTICLES = 20000;
-  real dt = 0.01;
-  real total_time = 10 * dt;
+  const int seed = get_argval<int>(argv, argv + argc, "--seed", 42);
+  const uint N_PARTICLES = get_argval<uint>(argv, argv + argc, "-n", 256);
+  const real dt = get_argval<real>(argv, argv + argc, "--dt", 0.1);
+  const real total_time = get_argval<real>(argv, argv + argc, "--total_time", 100.0);
+  const bool dump_data = get_arg(argv, argv + argc, "--dump");
+  const bool quiet = get_arg(argv, argv + argc, "--quiet");
+  const real time_between_dumps = total_time / 100;
+  const real time_between_reports = total_time / 1000;
 
   // This prevents numerical errors when two particles are very close
   const real epsilon = 1.1 * std::pow(real(N_PARTICLES), -0.48);
@@ -139,15 +146,37 @@ int main() {
   real t = 0;
   int loop_counter = 0;
   int dump_counter = 0;
+  Timer<std::chrono::microseconds> timer;
+  real ms_per_loop = 0.0;
+  real time_to_next_dump = 0.0;
+  real time_to_next_report = 0.0;
 
   while (t < total_time) {
+    ms_per_loop = timer.lap();
+
     calc_acc(acc, pos, mass, epsilon);
     std::copy(pos.begin(), pos.end(), pos_temp.begin());
     advance_pos(pos, pos_prev, acc, dt);
     pos_temp.swap(pos_prev);
-    if (loop_counter % 1000 == 0) {
+    if (t > time_to_next_dump and dump_data) {
+      time_to_next_dump += time_between_dumps;
       dump_to_file(format_fname(dump_counter), pos);
       dump_counter += 1;
+    }
+
+    if(t > time_to_next_report and !quiet) {
+      time_to_next_report += time_between_reports;
+      std::cout << CLEAR_SCREEN << JUMP_HOME;
+      if(tests_passed) {
+        std::cout << "ALL TESTS PASSED\n";
+      }
+      std::cout << "N_PARTICLES: " << N_PARTICLES << "\n";
+      std::cout << "Loop time: " << ms_per_loop << " us\n";
+      const real pc_remaining = t / total_time * 100;
+      printf("Sim time remaining: %.2f (%.2f \%)\n", total_time - t, pc_remaining);
+      const int n_loops_remaining = (total_time - t ) / dt;
+      const real realtime_remaining = n_loops_remaining * ms_per_loop;
+      printf("Real time remaining: %.2f s\n", realtime_remaining / 1e6);
     }
 
     t += dt;
