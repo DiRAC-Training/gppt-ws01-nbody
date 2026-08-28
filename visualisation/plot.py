@@ -8,7 +8,7 @@ import sys
 def plot(fname):
     pos = np.genfromtxt(fname, delimiter=",")
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize = (4,4))
     xmin, xmax = 0.0, 0.0
     ymin, ymax = 0.0, 0.0
 
@@ -25,6 +25,7 @@ def plot(fname):
     ymin = -ymax
     plt.xlim(xmin, xmax)
     plt.ylim(ymin, ymax)
+    plt.tight_layout()
     plt.savefig(fname + ".png")
     plt.close()
 
