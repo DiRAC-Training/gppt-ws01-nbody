@@ -1,9 +1,18 @@
+! ============================================================================
+! N-body simulation -- OpenMP target offload exercise, starting point.
+!
+! This is a correct, working CPU simulation. Your job is to accelerate it on
+! an Nvidia GPU using OpenMP `target` offloading, without changing what it
+! computes. Follow the tasks in README.md; the TODO comments below mark
+! where each one goes and are labelled to match (e.g. "TODO (Task 1a)").
+!
+! Do not change the maths in any subroutine -- only add OpenMP directives.
+! ============================================================================
 module nbody_simulation
     ! use iso_fortran_env, only: wp => real64
     implicit none
 
-    ! integer, parameter :: wp = kind(1.0d0)
-    integer, parameter :: wp = selected_real_kind(6, 37)
+    integer, parameter :: wp = kind(1.0d0)
     real(wp), parameter :: PI = 3.14159265358979323846_wp
     real(wp), parameter :: N_YEARS = 0.1_wp
     integer :: file_unit, ios
@@ -25,7 +34,7 @@ contains
         real(wp), intent(in) :: theta(:)
         real(wp), intent(out) :: pos(:,:)
         real(wp), intent(out) :: vel(:,:)
-        
+
         integer :: n
         real(wp), allocatable :: v_mag(:)
 
@@ -39,7 +48,7 @@ contains
 
         vel(:,1) = -v_mag * cos(theta)
         vel(:,2) =  v_mag * sin(theta)
-        
+
         deallocate(v_mag)
     end subroutine calc_stable_orbit
 
@@ -85,7 +94,7 @@ contains
         mass = [1.0_wp, 1.0_wp/6023600.0_wp, 1.0_wp/408524.0_wp, 1.0_wp/332946.038_wp, &
                 1.0_wp/3098710.0_wp, 1.0_wp/1047.55_wp, 1.0_wp/3499.0_wp, 1.0_wp/22962.0_wp, 1.0_wp/19352.0_wp]
         r = [0.1_wp, 0.4_wp, 0.7_wp, 1.0_wp, 1.5_wp, 5.2_wp, 9.5_wp, 19.2_wp, 30.1_wp]
-        
+
         call random_numbers(9, 0.0_wp, PI, theta)
         call calc_stable_orbit(r, theta, pos, vel)
 
@@ -94,6 +103,9 @@ contains
         mass(1) = 1.0_wp
     end subroutine create_solar_system
 
+    ! Computes the gravitational acceleration on every particle from every
+    ! other particle: O(n^2) work, and the hottest part of the simulation by
+    ! far. This is the first thing to move onto the GPU.
     subroutine calc_acc(acc, pos, mass)
         real(wp), intent(inout) :: acc(:,:)
         real(wp), intent(in) :: pos(:,:)
@@ -105,14 +117,23 @@ contains
         n = size(pos, 1)
         epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
 
-        !$omp target teams distribute parallel do
+        ! TODO (Task 1a): offload this loop to the GPU.
+        !
+        ! Add `!$omp target teams distribute parallel do` immediately above
+        ! the `do i = 1, n` line, and `!$omp end target teams distribute
+        ! parallel do` immediately after `enddo`.
         do i = 1, n
           acc(i,1) = 0.0_wp
           acc(i,2) = 0.0_wp
         enddo
-        !$omp end target teams distribute parallel do
-        
-        !$omp target teams distribute parallel do
+
+        ! TODO (Task 1b): offload the pairwise force loop to the GPU.
+        !
+        ! This is the O(n^2) loop and does almost all of the work in the
+        ! program. Parallelise over the outer `i` loop the same way as
+        ! Task 1a -- `target teams distribute parallel do` goes on the
+        ! `do i = 1, n` line; the `j` loop underneath it stays a plain
+        ! sequential loop running on each GPU thread.
         do i = 1, n
             do j = 1, n
                 dx = pos(j,1) - pos(i,1)
@@ -124,9 +145,12 @@ contains
                 acc(i,2) = acc(i,2) + dy * mass(j) * inv_dist_cube
             end do
         end do
-        !$omp end target teams distribute parallel do
     end subroutine calc_acc
 
+    ! Velocity-Verlet position update. Runs once per particle per step, so it
+    ! is much cheaper than calc_acc, but it still touches every array once a
+    ! step and is worth offloading so the data doesn't have to travel back to
+    ! the host in between.
     subroutine advance_pos(acc, pos, pos_prev, pos_temp, dt)
         real(wp), intent(in) :: acc(:,:)
         real(wp), intent(inout) :: pos(:,:)
@@ -137,7 +161,8 @@ contains
 
         n = size(pos, 1)
 
-        !$omp target teams distribute parallel do
+        ! TODO (Task 1c): offload this loop to the GPU, the same way as
+        ! Task 1a.
         do i=1,n
             pos_temp(i,1) = pos(i,1)
             pos_temp(i,2) = pos(i,2)
@@ -146,7 +171,6 @@ contains
             pos_prev(i,1) = pos_temp(i,1)
             pos_prev(i,2) = pos_temp(i,2)
         end do
-        !$omp end target teams distribute parallel do
     end subroutine advance_pos
 
     function run_sim(is_solar_system, plot, n_particles) result(completion_time)
@@ -181,15 +205,34 @@ contains
             call generate_random_star_system(n, pos, vel, mass)
         end if
 
-        !$omp target data map(to: pos, mass) map(from: acc)
+        ! TODO (Task 2a): this one-off call to calc_acc launches GPU kernels
+        ! (once you've done Task 1) with no target data region around it, so
+        ! pos, mass and acc are copied across PCIe on every kernel entry and
+        ! exit inside it. Wrap the call below in a `!$omp target data`
+        ! region: pos and mass only need to go *to* the device, acc only
+        ! needs to come back *from* it.
         call calc_acc(acc, pos, mass)
-        !$omp end target data
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
 
         t = 0.0_wp
 
-        !$omp target data map(tofrom: pos) map(to:mass, pos_prev) map(alloc: acc, pos_temp)
+        ! TODO (Task 2b): this is the main time-stepping loop. Every step it
+        ! calls calc_acc and advance_pos, which together launch several GPU
+        ! kernels -- and without a target data region here, *each* of those
+        ! kernels re-copies its arrays across PCIe on entry and exit, every
+        ! single step. Wrap the whole `do while` loop below in one
+        ! `!$omp target data` region that keeps pos, mass, pos_prev, acc and
+        ! pos_temp resident on the device for the entire loop. Pick the
+        ! map-type for each array based on how it is actually used across the
+        ! loop:
+        !   - pos is updated every step by the device, and the host needs
+        !     its final values afterwards (it's written to file below).
+        !   - mass and pos_prev are read by the device every step but never
+        !     written by it.
+        !   - acc and pos_temp are pure device scratch space: never given a
+        !     useful value by the host, and never read by the host.
+        ! (See the OpenMP map-type clauses: to, from, tofrom, alloc.)
         call system_clock(count_start, count_rate)
         do while (t < total_time)
             call calc_acc(acc, pos, mass)
@@ -197,7 +240,6 @@ contains
             t = t + dt
         end do
         call system_clock(count_end)
-        !$omp end target data
 
         if (ios == 0) then
             do i = 1, n
@@ -206,7 +248,7 @@ contains
         end if
 
         completion_time = real(count_end - count_start, wp) / real(count_rate, wp)
-        
+
         print '(A, F10.4, A)', "Time to complete: ", completion_time, " s"
 
         if (plot) then
@@ -263,19 +305,21 @@ contains
         mass = [2.0, 0.5]
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [1.0, 0.0]
-        
-        !$omp target data map(to: pos, mass) map(from: acc)
+
+        ! TODO (Task 3): this test calls calc_acc directly, outside of
+        ! run_sim, so it needs its own target data region -- add the same
+        ! kind of `!$omp target data` region you used for Task 2a around the
+        ! call below.
         call calc_acc(acc, pos, mass)
-        !$omp end target data
         epsilon = 1.1 * (2.0**(-0.48))
-        
+
         expected_acc(1, :) = [1.0, 0.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
         expected_acc(2, :) = -[1.0, 0.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
         call assert_almost_equal(acc, expected_acc, "test_calc_acc horizontal")
 
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [0.0, 1.0]
-        
+
         call calc_acc(acc, pos, mass)
         expected_acc(1, :) = [0.0, 1.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
         expected_acc(2, :) = -[0.0, 1.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
@@ -296,25 +340,25 @@ contains
         acc(1, :) = [0.5, -1.0]
 
         call advance_pos(acc, pos, pos_prev, pos_temp, dt)
-        
+
         expected_pos(1, 1) = 2.0 - 0.5 + 0.5 * 0.5**2
         expected_pos(1, 2) = 4.0 - 3.0 + (-1.0) * 0.5**2
-        
+
         call assert_almost_equal(pos, expected_pos, "test_advance_pos")
     end subroutine test_advance_pos
-    
+
 end module nbody_simulation
 
 #ifdef MAIN
 program main
-    
+
     use nbody_simulation
     implicit none
 
     integer :: i
     !integer, dimension(5) :: n_particle_range = [800, 1600, 3200, 6400, 12800]
     !real(wp), dimension(5) :: runtimes
-    integer, dimension(1) :: n_particle_range = [50000]
+    integer, dimension(1) :: n_particle_range = [20000]
     real(wp), dimension(1) :: runtimes
 
     open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
@@ -325,7 +369,7 @@ program main
     do i = 1, 1
         runtimes(i) = run_sim(.false., .false., n_particle_range(i))
     end do
-        
+
     if (ios == 0) close(file_unit)
 
     print *, "Particle counts:"
@@ -338,7 +382,7 @@ end program main
 
 #ifdef TEST
 program test
-    
+
     use nbody_simulation
     implicit none
 
