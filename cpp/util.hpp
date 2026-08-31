@@ -62,3 +62,25 @@ public:
     return elapsed;
   }
 };
+
+// File IO
+/// Output list of positions as CSV file
+void dump_to_file(const std::string &fname, const vector<Vec2> &pos) {
+  std::ofstream out(fname);
+
+  if (out.is_open()) {
+    for (int i = 0; i < pos.size(); ++i) {
+      out << pos[i].x << "," << pos[i].y << "\n";
+    }
+    out.close();
+  } else
+    std::cout << "Unable to open file";
+}
+
+/// Format integer into CSV filename
+std::string format_fname(int count) {
+  char buffer[16];
+  sprintf(buffer, "%04d.csv", count);
+  return std::string(buffer);
+}
+

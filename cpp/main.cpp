@@ -67,36 +67,9 @@ void calc_stable_orbit(vector<Vec2> &pos, vector<Vec2> &vel,
   }
 }
 
-/// Output list of positions as CSV file
-void dump_to_file(const std::string &fname, const vector<Vec2> &pos) {
-  std::ofstream out(fname);
-
-  if (out.is_open()) {
-    for (int i = 0; i < pos.size(); ++i) {
-      out << pos[i].x << "," << pos[i].y << "\n";
-    }
-    out.close();
-  } else
-    std::cout << "Unable to open file";
-}
-
-/// Format integer into CSV filename
-std::string format_fname(int count) {
-  char buffer[16];
-  sprintf(buffer, "%04d.csv", count);
-  return std::string(buffer);
-}
-
 bool all_tests_pass();
 
 int main(int argc, char* argv[]) {
-  const bool RUN_UNIT_TESTS = true;
-  bool tests_passed = true;
-  if (RUN_UNIT_TESTS) {
-    tests_passed = all_tests_pass(); 
-    if(!tests_passed) return -1;
-  }
-
   // Parameters
   const int seed = get_argval<int>(argv, argv + argc, "--seed", 42);
   const uint N_PARTICLES = get_argval<uint>(argv, argv + argc, "-n", 256);
@@ -104,8 +77,15 @@ int main(int argc, char* argv[]) {
   const real total_time = get_argval<real>(argv, argv + argc, "--total_time", 100.0);
   const bool dump_data = get_arg(argv, argv + argc, "--dump");
   const bool quiet = get_arg(argv, argv + argc, "--quiet");
+  const bool disable_unit_tests = get_arg(argv, argv + argc, "--disable_unit_tests");
   const real time_between_dumps = total_time / 100;
   const real time_between_reports = total_time / 1000;
+
+  bool tests_passed = true;
+  if (!disable_unit_tests) {
+    tests_passed = all_tests_pass(); 
+    if(!tests_passed) return -1;
+  }
 
   // This prevents numerical errors when two particles are very close
   const real epsilon = 1.1 * std::pow(real(N_PARTICLES), -0.48);
@@ -167,7 +147,7 @@ int main(int argc, char* argv[]) {
     if(t > time_to_next_report and !quiet) {
       time_to_next_report += time_between_reports;
       std::cout << CLEAR_SCREEN << JUMP_HOME;
-      if(tests_passed) {
+      if(tests_passed and !disable_unit_tests) {
         std::cout << "ALL TESTS PASSED\n";
       }
       std::cout << "N_PARTICLES: " << N_PARTICLES << "\n";
