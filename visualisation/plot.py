@@ -7,14 +7,10 @@ import sys
 
 def plot(fname):
     pos = np.genfromtxt(fname, delimiter=",")
-
-    fig, ax = plt.subplots(figsize = (4,4))
-    xmin, xmax = 0.0, 0.0
-    ymin, ymax = 0.0, 0.0
-
     xs = pos[:,0]
     ys = pos[:,1]
 
+    fig, ax = plt.subplots(figsize = (4,4))
     ax.plot(xs, ys, '.')
 
     xmax = max(abs(np.max(xs)), abs(np.min(xs)))
@@ -23,6 +19,7 @@ def plot(fname):
     ymax = 20
     xmin = -xmax
     ymin = -ymax
+
     plt.xlim(xmin, xmax)
     plt.ylim(ymin, ymax)
     plt.tight_layout()
@@ -33,4 +30,4 @@ def plot(fname):
 if(len(sys.argv) > 1):
     for fname in sys.argv[1:]: plot(fname)
 else:
-    print("Usage: ./plot.py <filename>")
+    print("Usage: ./plot.py <filenames>")
