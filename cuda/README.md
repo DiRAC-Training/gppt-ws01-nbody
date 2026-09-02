@@ -22,8 +22,8 @@ gravitational pull of every other particle, so each step is O(N^2).
 | Function         | Runs on    | What it does                                |
 |------------------|------------|---------------------------------------------|
 | `calc_acc_pair`  | device     | Acceleration on one particle from one other |
-| `calc_acc`       | **device** | Acceleration on one particle from the rest  |
-| `calc_acc_tiled` | **device** | Empty. You fill this in during Task 2       |
+| `calc_acc`       | device     | Acceleration on one particle from the rest  |
+| `calc_acc_tiled` | device     | Empty. You fill this in during Task 2       |
 | `advance_pos`    | device     | Velocity-Verlet position update             |
 
 Time integration is velocity-Verlet, which requires information about the
@@ -31,8 +31,7 @@ previous position from `pos_prev`. The new position is written over the old one
 as soon as it has been read, then the two buffers are swapped after the update.
 
 `epsilon` is a softening length that stops the force blowing up when two
-particles are nearly coincident. It is a function of `N_PARTICLES`, because the
-right amount of softening depends on how closely packed the particles are.
+particles are nearly coincident.
 
 ### Build and run
 
@@ -69,12 +68,11 @@ ncu --section SpeedOfLight --section Occupancy --section WarpStateStats \
   kernel, skipping the first one. A kernel's first launch pays one-off costs such
   as module loading and cold caches, so it is not representative of the rest.
   Without this you profile every launch, which may take a very long time.
-- Do **not** use `--set full`. At these kernel durations it will take longer
-  than you have.
+- Do **not** use `--set full`. It will take too long.
 - `-k <kernel_name>` selects the kernel by name. Change it to profile individual
   kernels as needed.
 
-The number to quote is **Duration**, in the Speed Of Light section. One run is
+The number to use is **Duration**, in the Speed Of Light section. One run is
 enough — repeated `ncu` measurements of the same kernel agree to a fraction of a
 percent, so there is no need to average several, at least for the purpose of
 this exercise.
@@ -83,62 +81,95 @@ For a view of the whole timeline — which kernels ran and how long each took, p
 everything that is *not* inside a kernel (memory transfers, launch overhead etc.)
 — use Nsight Systems:
 
+## Task 1a - Identify a bottleneck with `nsys`
+
+Start by profiling the code with `nsys`:
+
 ```sh
 nsys profile -o report ./nbody
-nsys stats --report cuda_gpu_kern_sum report.nsys-rep
-nsys stats --report cuda_gpu_mem_time_sum report.nsys-rep
+nsys stats report.nsys-rep
 ```
 
-- `cuda_gpu_kern_sum` totals the time spent in each kernel. Use this to find out
-  which one is worth your attention before reaching for `ncu`.
-- `cuda_gpu_mem_time_sum` totals the host/device memory transfers.
+**Inspect the output to help answer the questions:**
 
----
+1. What kernel take the most time? Take note of this for later tasks.
+2. Where in the main loop is there an obvious bottleneck?
 
-## Task 1 — Profile, then fix what the profiler shows you
+The bottleneck is most clearly seen in the timeline view of the Nsight Systems UI. See the guidance document for more information on using this UI with CSD3. You can still identify it with just the text output from `nsys stats`.
 
-### Goal
+Feel free to peek at the hints below if you get stuck.
 
-Make the code faster **without changing the kernels themselves**. You should not
-be writing any new kernels in this task; every fix is a small, local edit.
+**Hint 1**
 
-By the end you should be able to say, with a profiler artefact to back each one:
+Look closer at the memory transfers. In the timeline view you should see a large block of async memory transfer happening. In `nsys stats` note how long the memory transfers take compared to the kernel runtime.
 
-1. Where the time actually goes.
-2. Which hardware resource is the limit.
-3. Which low-hanging fruit you can fix.
+**Hint 2**
 
-### What to do
+Read the code in the main loop. You should be able to identify lines that are transferring data.
 
-Start by profiling the code as given. Get a timeline of the whole code with
-`nsys` and identify the most expensive kernel. With `ncu`, profile that kernel
-and write down its Duration. Then investigate two separate parts of the program:
+**Solution**
 
-1. Something happening **between kernel launches** that may not need to happen
-   every step (using `nsys`).
-2. Something in the **launch configuration** that may not suit this kernel or
-   this GPU (using `ncu`).
+In the main loop, there are the following data transfers:
 
-Change them one at a time, re-measuring after each. Record changes that do not
-improve kernel duration as carefully as those that do: profiler evidence, not
-the apparent size of a code change, determines whether it mattered. Think back
-to the single-kernel examples and what you learned from them.
+```cpp
+thrust::copy(pos.begin(), pos.end(), pos_d.begin());
+thrust::copy(pos_prev.begin(), pos_prev.end(), pos_prev_d.begin());
 
-**Hint 1 — between the launches**
+...
 
-The kernel is not the only thing on the timeline. Run the `nsys` commands above
-and look at the `cuda_gpu_mem_time_sum` report: how many copies happen, and how
-many steps did you run?
+thrust::copy(pos_d.begin(), pos_d.end(), pos.begin());
+thrust::copy(pos_prev_d.begin(), pos_prev_d.end(), pos_prev.begin());
+```
 
-Then ask, for each copy in the main `while` loop: *what has changed on the other
-side since the last time this ran?* The device already holds the current state
-between steps — the kernels are writing into device buffers and the swap happens
-on the device.
+These are the only transfers occurring within the main loop and are the main bottleneck visible with Nsight Systems.
 
-Careful: this is not simply "delete them all". One of those copies is
-load-bearing and deleting it silently corrupts your output rather than crashing.
-Work out which one, and what it is for. Where does the host actually need
-updated information?
+## Task 1b - Fix the bottleneck
+
+**Remove or move appropriate data transfers to speed up the code without introducing a bug.**
+
+Remember to:
+
+1. Profile regularly.
+2. Compare `final.csv` to a previously saved `final.csv`.
+
+**Hint 1**
+
+The variables being transferred are `pos` and `pos_prev` (and their GPU partners `pos_d` and `pos_prev_d`. Within the main loop, where are these variables being used? Why are they being transferred?
+
+**Hint 2**
+
+`pos_prev` is in fact never used within the main loop, so transferring it doesn't need to happen at all! But what about `pos`...?
+
+**Hint 3**
+
+`pos` must be transferred before being dumped in:
+
+```cpp
+if (t >= next_dump) {
+  dump_to_file(format_fname(dump_counter), pos);
+  dump_counter += 1;
+  next_dump += t_between_dump;
+}
+```
+
+But in the current version of the code this happens every single timestep. Make sure the transfer happens if and when it's actually needed.
+
+**Solution**
+
+You should have now removed all data transfers from the main loop with the exception of the device to host transfer that should now happen inside the dump check:
+
+```cpp
+if (t >= next_dump) {
+  thrust::copy(pos_d.begin(), pos_d.end(), pos.begin());
+  dump_to_file(format_fname(dump_counter), pos);
+  dump_counter += 1;
+  next_dump += t_between_dump;
+}
+```
+
+Your profile should now reveal that the amount of time spent on data transfers is small compared to the actual runtime of the kernels.
+
+## Task 1c - Tuning parameters with Nsight Compute
 
 **Hint 2 — identify the limiting resource**
 

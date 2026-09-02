@@ -218,7 +218,6 @@ int main() {
   timer.lap();
 
   while (t < total_time) {
-
     thrust::copy(pos.begin(), pos.end(), pos_d.begin());
     thrust::copy(pos_prev.begin(), pos_prev.end(), pos_prev_d.begin());
 
@@ -233,17 +232,19 @@ int main() {
     thrust::copy(pos_d.begin(), pos_d.end(), pos.begin());
     thrust::copy(pos_prev_d.begin(), pos_prev_d.end(), pos_prev.begin());
 
+    cudaDeviceSynchronize();
+    time_per_loop = timer.lap();
+    total_elapsed_us += time_per_loop;
+
     loop_counter += 1;
     t += dt;
 
     if (t >= next_dump) {
+      thrust::copy(pos_d.begin(), pos_d.end(), pos.begin());
       dump_to_file(format_fname(dump_counter), pos);
       dump_counter += 1;
       next_dump += t_between_dump;
     }
-
-    time_per_loop = timer.lap();
-    total_elapsed_us += time_per_loop;
 
     if (t >= next_stat_print) {
       const std::string ESC = "\x1b";
@@ -260,7 +261,10 @@ int main() {
   }
 
   cudaDeviceSynchronize();
-  total_elapsed_us += timer.lap();
+
+  // Final dump
+  thrust::copy(pos_d.begin(), pos_d.end(), pos.begin());
+  dump_to_file("final.csv", pos);
 
   std::cout << "Steps: " << loop_counter << "\n";
   std::cout << "Total: " << total_elapsed_us << " us\n";
