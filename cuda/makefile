@@ -14,6 +14,6 @@ fmt:
 	clang-format -i --style=llvm *.cu
 
 clean:
-	rm nbody nbody_tiled
+	rm -f nbody nbody_tiled *.csv *.png
 
 .PHONY: all fmt clean
