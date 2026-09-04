@@ -330,7 +330,7 @@ In `nbody.cu` there is a version of `calc_acc_tiled` with some of the code repla
 
 Shared memory is (usually) declared *statically* so we have to specify a compile-time size. 
 
-Here, we have decided to make the block size and the tile size identical and use  `block_size` as the tile size.
+Here, we choose to make the block size and the tile size equal and use  `block_size` as the tile size.
 
 ```cpp
 __shared__ Vec2 shPosition[block_size];
@@ -341,6 +341,16 @@ Oh no! Our block_size is defined at runtime!
 **Remove the runtime variable `block_size` from `main` and instead declare this at the top as a `const int block_size = ...`.**
 
 **Fill in the second shared array that should hold masses.**
+
+Note: making the block and tile the same size makes some of our indexing easier later but couples the two sizes together, which means we can't independently tune the values.
+
+---
+
+**(Optional) Look at the makefile to see how `BLOCK_SIZE` can be passed from `make` to the code during compilation. Implement an `#ifdef` around your definition of `block_size` to allow setting `block_size` to the value of `BLOCK_SIZE` passed to the compiler.**
+
+**Solution**
+
+Previously, `block_size` could be set on the command line with a flag which made varying it easy. In order to 
 
 **TODO 2: Calculating the thread index**
 
@@ -477,154 +487,61 @@ Phew! Let's now test this version with the unit tests:
 
 **Update the calls to `calc_acc` in `test_calc_acc_x` and `test_calc_acc_y` to use the new tiled version.**
 
----
+Run with:
 
-### What to do
-
-2. Switch the main loop to launch it instead of `calc_acc`. Keep `calc_acc`
-   around — you want to compare.
-3. Update the launch in `test_calc_acc_x` and `test_calc_acc_y` too. Those tests
-   launch the kernel directly, so until you change them your tiled kernel is not
-   being tested at all.
-4. Sweep the tile size: 32, 64, 128, 256. Measure each with `ncu`.
-5. Compare your best tiled kernel with your best Task 1 kernel using `ncu`
-   Duration and supporting metrics. Do not base the comparison on the program's
-   printed timer alone.
-6. Increase `N_PARTICLES` until the Launch Statistics section reports more than
-   one wave per SM. Profile both kernels again at the same larger `N`, and
-   compare how their efficiency changes.
-
-<details>
-<summary>Hint 1 — the shape of the kernel</summary>
-
-</details>
-
-<details>
-<summary>Hint 2 — declaring the shared arrays</summary>
-
-You need something like:
-
-```cuda
-__shared__ Vec2 pos_s[TILE];
-__shared__ real mass_s[TILE];
+```bash
+make nbody && ./nbody --unit_tests_only
 ```
 
-Note what that one constant now couples together: the shared array size, the
-launch block size, the number of tiles, and the inner loop bound. Tile size *is*
-block size here, which is why the sweep in step 4 changes both at once.
+**Update the call to `calc_acc` in the main loop to fully transition to the tiled version.**
 
-</details>
-
-<details>
-<summary>Hint 3 — where the two barriers go, and why both are needed</summary>
-
-- After the loads, before the inner loop — so nobody reads a slot before its
-  owner has written it.
-- After the inner loop, before the next tile's loads — so nobody overwrites a
-  slot another thread has not finished reading.
-
-Dropping the second one is the classic bug. It usually still produces
-plausible-looking output, which is why you need to compare against your Task 1
-results rather than trusting that the simulation still looks right.
-
-</details>
-
-<details>
-<summary>Hint 4 — why threads past the end cannot simply return</summary>
-
-`__syncthreads()` has to be reached by *every* thread in the block. If the
-out-of-range threads take `calc_acc`'s early `return`, the rest of the block
-waits at a barrier those threads will never arrive at. Depending on the launch
-configuration this may appear to work, hang, or quietly give wrong answers — all
-worse than a clean failure.
-
-So every thread runs the whole loop structure, and you guard the *values* rather
-than the control flow. A conditional expression keeps every thread on the same
-path through the barriers; an `if` that skips one does not.
-
-That leaves the question of what an unused slot should contain. Think about what
-makes a particle contribute *exactly nothing* to the sum — get that right and the
-inner loop needs no condition at all. Look at what `calc_acc_pair` multiplies by.
-
-</details>
-
-<details>
-<summary>Hint 5 — tuning the tile size</summary>
-
-Sweep it rather than assuming the answer is the same as Task 1's best block
-size. Changing the tile size changes several things at once: the shared-memory
-footprint, the number of active blocks and warps, the number of tiles, and the
-cost of each barrier.
-
-Use Duration to decide which version is faster. Use occupancy, memory throughput
-and warp-state metrics to explain the result. An individual metric improving is
-not sufficient evidence that the kernel became faster.
-
-</details>
-
-<details>
-<summary>Hint 6 — scaling beyond one wave</summary>
-
-Look for **Waves Per SM** in the Launch Statistics section. Increase
-`N_PARTICLES` until it is greater than one, then profile the naive and tiled
-kernels at exactly the same `N` and with their respective tuned launch
-configurations.
-
-The direct-summation calculation performs O(N^2) pair interactions, so raw
-Duration is not enough when comparing different particle counts. Also compare
-`Duration / N^2`, or calculate pair interactions per second. Use `ncu` for the
-kernel measurement; the program's printed timer is only a whole-application
-sanity check.
-
-</details>
-
-Each value of `N` is a different set of particles, so do not compare
-trajectories between them in this experiment. The purpose here is to study
-computational scaling.
-
-### Checking you are right
-
-- [ ] **Diff against Task 1 — this is your safety net.** Your tiled kernel computes
-  the same quantity as your Task 1 kernel, and if you followed the steps above it
-  also sums in the same order: working tile by tile still visits the source
-  particles `0, 1, 2, ... N-1`, and padded slots contribute exactly zero. Dump
-  `0000.csv` from each and compare — to the precision written out they should
-  agree exactly. A visible difference means a barrier or an indexing bug, not
-  rounding.
-- [ ] **Run the unit tests too, but do not stop there.** They use two particles, so
-  the whole calculation fits in a single tile. That does exercise your padding —
-  at a tile size of 32, thirty of the thirty-two slots are unused — but with only
-  one tile there is never a second pass over the shared arrays, so a missing
-  barrier costs nothing and the tests still pass. Passing them means you have not
-  broken the obvious things; it does not mean your tiling is correct.
-- [ ] **Test the tail specifically.** Most tiling bugs live in the last, partly-full
-  tile. Run with an `N_PARTICLES` that is *not* a multiple of your tile size. If
-  it works at N = 1024 with tile 128 but not at N = 1000, your padding is wrong.
-- [ ] **Check the shared memory is actually being used.** In the Launch Statistics
-  section, Static Shared Memory Per Block should be non-zero and consistent with
-  your tile size × (`sizeof(Vec2)` + `sizeof(real)`). If it is zero, you are not
-  running the kernel you think you are.
-- [ ] **Sanity-check the memory metrics.** Compare the relevant cache and shared-
-  memory metrics with Task 1 and check that they are consistent with source
-  particles being loaded cooperatively. If they are unchanged, confirm that you
-  profiled `calc_acc_tiled` rather than `calc_acc`.
-- [ ] **Check scaling with `ncu`.** At each particle count compare the two kernels at
-  the same `N`, then normalize by N^2 when comparing efficiency across particle
-  counts. Keep the printed timer separate from the kernel-level evidence.
-
-### Before you move on
-
-In your own words, without looking back at the Goal section: how does tile
-size affect the kernel, does its best value match the best block size you
-found in Task 1, and how does that comparison change once the problem grows
-beyond one wave per SM?
+You should check the output of `final.csv` with an output from the untiled version to ensure this optimisation hasn't changed the numerical values.
 
 ---
 
-## If you finish early
+Let's actually check shared memory is being used.
 
-Both of these are standard published n-body techniques (see references) that can
-be explored on top of a working tiled kernel:
+**Profile with `ncu` and inspect the results.**
+
+In the Launch Statistics section, Static Shared Memory Per Block should be
+non-zero and consistent with your tile size × (`sizeof(Vec2)`
++ `sizeof(real)`). If it is zero, you are not running the kernel you think you
+are.
+
+**Compare to a non-tiled profile. In which metrics can we see the effect of the tiling optimisation?**
+
+---
+
+Now let's tune the block and tile size. Since we made the block size a compile time constant, we can either manually edit it and recompile or set the value from the make command, as already implemented in `makefile` and the solution `nbody_tiled.cu`. You may have implemented this yourself in an earlier task, but feel free to check the solution.
+
+We should be able to run a similar sweep as before:
+
+```bash
+for n in 32 64 128 256 512 1024; do
+    make clean && make nbody BLOCK_SIZE=bs
+    ./nbody -n 100000 --quiet
+done
+```
+
+**Is the optimal value the same as in the untiled version? Why do you think this is?**
+
+Using `ncu` will give more accurate timing measurements and other metrics.
+
+**Run the tuned version through `ncu` and compare the metrics to a profile of the optimal untiled. What do you notice?**
+
+**Choose a larger number of particles and re-run the experiment. How does each version scale with problem size?**
+
+Note that the problem size scales as `N_PARTICLES^2` so a useful value  is `runtime / N_PARTICLES^2`.
+
+## Task 3: Reflection
+
+In the previous task you implemented a tiling optimisation that reuses data to avoid extra memory loads. This is a complex optimisation so well done for getting it done!
+
+Since we are using 1D arrays, the global and local indexing and loop structures are about as simple as they can get, but it's still a complex optimisation. In higher dimensional problems, there are more choices to be made about the shape of the tile, and the indexing becomes significantly more complex, so this isn't an optimisation that can be easily thrown at a problem, although it can be extremely effective.
+
+Tiling is common but not the only use of shared memory. This is just one way of using a programmable cache and you should consider other algorithms that could benefit from some explicit caching.
+
+## Extension tasks
 
 - **Pack position and mass together.** `Vec2` + `real` is currently two separate
   loads from two arrays. A single 16-byte structure would be one wider load.
@@ -633,6 +550,7 @@ be explored on top of a working tiled kernel:
   tile is then loaded once and reused several times, and the loads amortise
   further. Watch what it does to Registers Per Thread, and whether that starts
   limiting occupancy.
+- **Pad the data before tiling.** In order to access within the bounds of the data, the tiled kernel branches: `(gtid < N) ? pos[gtid] : Vec2{0.0, 0.0}`. You can avoid these kinds of branches by padding the input data with null data to contain *exactly* a multiple of the block size. This generally depends on the algorithm but we can achieve this here by padding the position and mass arrays with zeros.
 
 ### References
 

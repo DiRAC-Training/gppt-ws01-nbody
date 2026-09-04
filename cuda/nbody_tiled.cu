@@ -1,6 +1,5 @@
 #include <cmath>
 #include <cstdio>
-#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -10,7 +9,11 @@
 
 using std::vector;
 
-const int block_size = 128;
+#ifdef BLOCK_SIZE
+const int block_size = BLOCK_SIZE;
+#else
+const int block_size = 32;
+#endif
 
 #define PRECISION_SINGLE
 
