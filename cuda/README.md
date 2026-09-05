@@ -63,7 +63,7 @@ There is also a video plotting tool that plots all CSVs in the current folder an
 
 ### WARNING: Timing can be tricky
 
-Do **not** rely solely on the wall-clock number the program prints on its own to
+Do not rely **solely** on the wall-clock number the program prints on its own to
 decide whether a change helped. You are on a shared node, so your runtime will be affected by other users on the system.
 
 ## **Task 1a** - Identify a bottleneck with `nsys`
@@ -269,6 +269,8 @@ At this point you've used `nsys` to find the dominant kernel, `calc_acc`, and di
 
 Profiling is one of the key pillars of GPU programming. If you get used to using these tools often, you will quickly optimise your codes.
 
+Either note down the answers to the following questions or discuss with someone nearby:
+
 **How do you think you will use these tools in your own work?**
 
 **Do you already use these tools in a different way?**
@@ -389,15 +391,19 @@ shMass[threadIdx.x] = (idx < N) ? mass[idx] : real(0.0);
 
 The point of this algorithm is to process the data one tile at a time, in chunks of size `block_size`. So the first time through the outer tile loop, `tile_start == 0`, and we copy all values from 0 to `block_size` into the shared memory:
 
+```
 |0|1|2|...|31| SHARED
  ^ ^ ^        
 |0|1|2|...|31| GLOBAL
+```
 
 The second time through the loop, `tile_start == 1 * block_size`, and we copy from `1*block_size` to `2*block_size`:
 
+```
 |0 |1 |2 |...|31| SHARED
  ^ ^ ^ ^        
 |32|33|34|...|63| GLOBAL
+```
 
 So the global index into `pos` and `mass` must combine the offset into the global array given by `tile_start` with the index of the thread, `threadIdx.x`:
 
