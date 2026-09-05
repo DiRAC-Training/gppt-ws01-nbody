@@ -1,9 +1,11 @@
 module nbody_simulation
-    ! use iso_fortran_env, only: wp => real64
     implicit none
 
-    ! integer, parameter :: wp = kind(1.0d0) ! double precision
+#ifdef SINGLE_PRECISION
     integer, parameter :: wp = selected_real_kind(6, 37) ! single precision
+#else
+    integer, parameter :: wp = kind(1.0d0) ! double precision
+#endif
     real(wp), parameter :: PI = 3.14159265358979323846_wp
     real(wp), parameter :: N_YEARS = 0.1_wp
     integer :: file_unit, ios
@@ -25,7 +27,7 @@ contains
         real(wp), intent(in) :: theta(:)
         real(wp), intent(out) :: pos(:,:)
         real(wp), intent(out) :: vel(:,:)
-        
+
         integer :: n
         real(wp), allocatable :: v_mag(:)
 
@@ -39,7 +41,7 @@ contains
 
         vel(:,1) = -v_mag * cos(theta)
         vel(:,2) =  v_mag * sin(theta)
-        
+
         deallocate(v_mag)
     end subroutine calc_stable_orbit
 
@@ -74,64 +76,6 @@ contains
         deallocate(r, theta)
     end subroutine generate_random_star_system
 
-    subroutine create_solar_system(pos, vel, mass)
-        real(wp), intent(out) :: pos(9, 2)
-        real(wp), intent(out) :: vel(9, 2)
-        real(wp), intent(out) :: mass(9)
-
-        real(wp) :: r(9)
-        real(wp) :: theta(9)
-
-        mass = [1.0_wp, 1.0_wp/6023600.0_wp, 1.0_wp/408524.0_wp, 1.0_wp/332946.038_wp, &
-                1.0_wp/3098710.0_wp, 1.0_wp/1047.55_wp, 1.0_wp/3499.0_wp, 1.0_wp/22962.0_wp, 1.0_wp/19352.0_wp]
-        r = [0.1_wp, 0.4_wp, 0.7_wp, 1.0_wp, 1.5_wp, 5.2_wp, 9.5_wp, 19.2_wp, 30.1_wp]
-        
-        call random_numbers(9, 0.0_wp, PI, theta)
-        call calc_stable_orbit(r, theta, pos, vel)
-
-        pos(1,:) = 0.0_wp
-        vel(1,:) = 0.0_wp
-        mass(1) = 1.0_wp
-    end subroutine create_solar_system
-
-    subroutine calc_acc(acc, pos, mass)
-        real(wp), intent(inout) :: acc(:,:)
-        real(wp), intent(in) :: pos(:,:)
-        real(wp), intent(in) :: mass(:)
-
-        integer :: i, j, n
-        real(wp) :: epsilon, dx, dy, dist_sq, inv_dist_cube
-
-#ifdef TILED
-        call calc_acc_tiled(acc, pos, mass)
-        return
-#endif
-
-        n = size(pos, 1)
-        epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
-
-        !$omp target teams distribute parallel do
-        do i = 1, n
-          acc(i,1) = 0.0_wp
-          acc(i,2) = 0.0_wp
-        enddo
-        !$omp end target teams distribute parallel do
-        
-        !$omp target teams distribute parallel do
-        do i = 1, n
-            do j = 1, n
-                dx = pos(j,1) - pos(i,1)
-                dy = pos(j,2) - pos(i,2)
-                dist_sq = dx**2 + dy**2 + epsilon**2
-                ! inv_dist_cube = 1.0_wp / (dist_sq**1.5_wp)
-                inv_dist_cube = 1.0_wp / (dist_sq * sqrt(dist_sq))
-                acc(i,1) = acc(i,1) + dx * mass(j) * inv_dist_cube
-                acc(i,2) = acc(i,2) + dy * mass(j) * inv_dist_cube
-            end do
-        end do
-        !$omp end target teams distribute parallel do
-    end subroutine calc_acc
-
     ! Tiled version of calc_acc's pairwise loop. Each GPU thread still owns
     ! exactly one particle `i` and accumulates its own acceleration, same as
     ! calc_acc -- what changes is *how* it reads the source particles `j`.
@@ -152,7 +96,7 @@ contains
     ! One CUDA block == one OpenMP team == one iteration of the `distribute`
     ! loop below; one CUDA thread == one OpenMP thread of the nested
     ! `parallel` region. TILE doubles as both the tile size and the team
-    ! (block) size, same as ../cuda/nbody_tiled.cu.
+    ! (block) size.
 #ifdef TILED
     subroutine calc_acc_tiled(acc, pos, mass)
         use omp_lib, only: omp_get_thread_num
@@ -231,8 +175,53 @@ contains
         !$omp end distribute
         !$omp end target teams
     end subroutine calc_acc_tiled
+#endif ! TILED
+
+    ! Computes the gravitational acceleration on every particle from every
+    ! other particle: O(n^2) work, and the hottest part of the simulation by
+    ! far. This is the first thing to move onto the GPU.
+    subroutine calc_acc(acc, pos, mass)
+        real(wp), intent(inout) :: acc(:,:)
+        real(wp), intent(in) :: pos(:,:)
+        real(wp), intent(in) :: mass(:)
+
+        integer :: i, j, n
+        real(wp) :: epsilon, dx, dy, dist_sq, inv_dist_cube
+
+#ifdef TILED
+        call calc_acc_tiled(acc, pos, mass)
+        return
 #endif
 
+        n = size(pos, 1)
+        epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
+
+        !$omp target teams distribute parallel do
+        do i = 1, n
+          acc(i,1) = 0.0_wp
+          acc(i,2) = 0.0_wp
+        enddo
+        !$omp end target teams distribute parallel do
+        
+        !$omp target teams distribute parallel do
+        do i = 1, n
+            do j = 1, n
+                dx = pos(j,1) - pos(i,1)
+                dy = pos(j,2) - pos(i,2)
+                dist_sq = dx**2 + dy**2 + epsilon**2
+                ! inv_dist_cube = 1.0_wp / (dist_sq**1.5_wp)
+                inv_dist_cube = 1.0_wp / (dist_sq * sqrt(dist_sq))
+                acc(i,1) = acc(i,1) + dx * mass(j) * inv_dist_cube
+                acc(i,2) = acc(i,2) + dy * mass(j) * inv_dist_cube
+            end do
+        end do
+        !$omp end target teams distribute parallel do
+    end subroutine calc_acc
+
+    ! Velocity-Verlet position update. Runs once per particle per step, so it
+    ! is much cheaper than calc_acc, but it still touches every array once a
+    ! step and is worth offloading so the data doesn't have to travel back to
+    ! the host in between.
     subroutine advance_pos(acc, pos, pos_prev, pos_temp, dt)
         real(wp), intent(in) :: acc(:,:)
         real(wp), intent(inout) :: pos(:,:)
@@ -255,37 +244,30 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine advance_pos
 
-    function run_sim(is_solar_system, plot, n_particles) result(completion_time)
-        logical, intent(in) :: is_solar_system
-        logical, intent(in) :: plot
+    subroutine run_sim(n_particles, n_steps)
         integer, intent(in) :: n_particles
-        real(wp) :: completion_time
+        integer, intent(in) :: n_steps
 
-        real(wp) :: dt, total_time, t
+        integer :: current_step = 0
+        integer :: print_every
+        real(wp) :: completion_time
+        real(wp) :: dt
+
         real(wp), allocatable :: pos(:,:), vel(:,:), mass(:)
         real(wp), allocatable :: acc(:,:), pos_temp(:,:), pos_prev(:,:)
         integer :: n, count_rate, count_start, count_end
         integer :: i
 
-        if (is_solar_system) then
-            print *, "Running regular solar system"
-            n = 9
-        else
-            print *, "Running with ", n_particles, " particles"
-            n = n_particles
-        end if
+        print *, "Running with ", n_particles, " particles"
+        n = n_particles
 
         dt = 0.01_wp
-        total_time = 10.0_wp * dt
+        print_every = max(floor(real(n_steps) / 10), 1) ! Print every N steps
 
         allocate(pos(n, 2), vel(n, 2), mass(n))
         allocate(acc(n, 2), pos_temp(n, 2), pos_prev(n, 2))
 
-        if (is_solar_system) then
-            call create_solar_system(pos, vel, mass)
-        else
-            call generate_random_star_system(n, pos, vel, mass)
-        end if
+        call generate_random_star_system(n, pos, vel, mass)
 
         !$omp target data map(to: pos, mass) map(from: acc)
         call calc_acc(acc, pos, mass)
@@ -293,14 +275,16 @@ contains
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
 
-        t = 0.0_wp
-
         !$omp target data map(tofrom: pos) map(to:mass, pos_prev) map(alloc: acc, pos_temp)
         call system_clock(count_start, count_rate)
-        do while (t < total_time)
+        
+        do while (current_step < n_steps)
             call calc_acc(acc, pos, mass)
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
-            t = t + dt
+            current_step = current_step + 1
+            if (mod(current_step, print_every) .eq. 0) then
+              print *, "Complete: ", real(current_step) / real(n_steps) * 100
+            end if
         end do
         call system_clock(count_end)
         !$omp end target data
@@ -312,15 +296,12 @@ contains
         end if
 
         completion_time = real(count_end - count_start, wp) / real(count_rate, wp)
-        
-        print '(A, F10.4, A)', "Time to complete: ", completion_time, " s"
 
-        if (plot) then
-            print *, "Plotting is not implemented in standard Fortran. Please use a library like DISLIN or export data to CSV."
-        end if
+        print '(A, F10.4, A)', "Time to complete: ", completion_time, " s"
+        print '(A, F10.4, A)', "Mean time per step: ", completion_time / n_steps, " s"
 
         deallocate(pos, vel, mass, acc, pos_temp, pos_prev)
-    end function run_sim
+    end subroutine run_sim
 
     subroutine assert_almost_equal(a, b, label)
         real(wp), intent(in) :: a(:,:), b(:,:)
@@ -374,14 +355,14 @@ contains
         call calc_acc(acc, pos, mass)
         !$omp end target data
         epsilon = 1.1 * (2.0**(-0.48))
-        
+
         expected_acc(1, :) = [1.0, 0.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
         expected_acc(2, :) = -[1.0, 0.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
         call assert_almost_equal(acc, expected_acc, "test_calc_acc horizontal")
 
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [0.0, 1.0]
-        
+
         call calc_acc(acc, pos, mass)
         expected_acc(1, :) = [0.0, 1.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
         expected_acc(2, :) = -[0.0, 1.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
@@ -402,49 +383,94 @@ contains
         acc(1, :) = [0.5, -1.0]
 
         call advance_pos(acc, pos, pos_prev, pos_temp, dt)
-        
+
         expected_pos(1, 1) = 2.0 - 0.5 + 0.5 * 0.5**2
         expected_pos(1, 2) = 4.0 - 3.0 + (-1.0) * 0.5**2
-        
+
         call assert_almost_equal(pos, expected_pos, "test_advance_pos")
     end subroutine test_advance_pos
-    
+
 end module nbody_simulation
 
 #ifdef MAIN
 program main
-    
+
     use nbody_simulation
     implicit none
 
     integer :: i
-    !integer, dimension(5) :: n_particle_range = [800, 1600, 3200, 6400, 12800]
-    !real(wp), dimension(5) :: runtimes
-    integer, dimension(1) :: n_particle_range = [50000]
-    real(wp), dimension(1) :: runtimes
+    integer :: n_particles
+    integer :: steps_arg = 10, seed_arg, argc, iarg, stat
+    logical :: seed_given
+    integer :: seed_size
+    integer, allocatable :: seed_array(:)
+    character(len=64) :: arg
+
+    steps_arg = 10
+    seed_given = .false.
+
+    argc = command_argument_count()
+    iarg = 1
+    do while (iarg <= argc)
+        call get_command_argument(iarg, arg)
+        select case (trim(arg))
+        case ('-n', '--particles')
+            iarg = iarg + 1
+            call get_command_argument(iarg, arg, status=stat)
+            if (stat /= 0) then
+                print *, "Missing value for ", trim(arg)
+                stop 1
+            end if
+            read(arg, *) n_particles
+        case ('--steps')
+            iarg = iarg + 1
+            call get_command_argument(iarg, arg, status=stat)
+            if (stat /= 0) then
+                print *, "Missing value for --steps"
+                stop 1
+            end if
+            read(arg, *) steps_arg
+        case ('--seed')
+            iarg = iarg + 1
+            call get_command_argument(iarg, arg, status=stat)
+            if (stat /= 0) then
+                print *, "Missing value for --seed"
+                stop 1
+            end if
+            read(arg, *) seed_arg
+            seed_given = .true.
+        case default
+            print *, "Unknown argument: ", trim(arg)
+            stop 1
+        end select
+        iarg = iarg + 1
+    end do
 
     open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
     if (ios /= 0) then
         print *, "Error opening trajectory.csv"
     end if
 
-    do i = 1, 1
-        runtimes(i) = run_sim(.false., .false., n_particle_range(i))
-    end do
-        
+    if (seed_given) then
+        call random_seed(size=seed_size)
+        allocate(seed_array(seed_size))
+        seed_array = seed_arg
+        call random_seed(put=seed_array)
+        deallocate(seed_array)
+    else
+      call random_seed()
+    end if
+
+
+    call run_sim(n_particles, steps_arg)
+
     if (ios == 0) close(file_unit)
-
-    print *, "Particle counts:"
-    print *, n_particle_range
-    print *, "Runtimes:"
-    print *, runtimes
-
 end program main
 #endif
 
 #ifdef TEST
 program test
-    
+
     use nbody_simulation
     implicit none
 

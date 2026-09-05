@@ -1,8 +1,11 @@
 module nbody_simulation
-    ! use iso_fortran_env, only: wp => real64
     implicit none
 
-    integer, parameter :: wp = kind(1.0d0)
+#ifdef SINGLE_PRECISION
+    integer, parameter :: wp = selected_real_kind(6, 37) ! single precision
+#else
+    integer, parameter :: wp = kind(1.0d0) ! double precision
+#endif
     real(wp), parameter :: PI = 3.14159265358979323846_wp
     real(wp), parameter :: N_YEARS = 0.1_wp
     integer :: file_unit, ios
@@ -73,28 +76,9 @@ contains
         deallocate(r, theta)
     end subroutine generate_random_star_system
 
-    subroutine create_solar_system(pos, vel, mass)
-        real(wp), intent(out) :: pos(9, 2)
-        real(wp), intent(out) :: vel(9, 2)
-        real(wp), intent(out) :: mass(9)
-
-        real(wp) :: r(9)
-        real(wp) :: theta(9)
-
-        mass = [1.0_wp, 1.0_wp/6023600.0_wp, 1.0_wp/408524.0_wp, 1.0_wp/332946.038_wp, &
-                1.0_wp/3098710.0_wp, 1.0_wp/1047.55_wp, 1.0_wp/3499.0_wp, 1.0_wp/22962.0_wp, 1.0_wp/19352.0_wp]
-        r = [0.1_wp, 0.4_wp, 0.7_wp, 1.0_wp, 1.5_wp, 5.2_wp, 9.5_wp, 19.2_wp, 30.1_wp]
-
-        call random_numbers(9, 0.0_wp, PI, theta)
-        call calc_stable_orbit(r, theta, pos, vel)
-
-        pos(1,:) = 0.0_wp
-        vel(1,:) = 0.0_wp
-        mass(1) = 1.0_wp
-    end subroutine create_solar_system
-
 #ifdef TILED
     subroutine calc_acc_tiled(acc, pos, mass)
+        use omp_lib, only: omp_get_thread_num
         real(wp), intent(inout) :: acc(:,:)
         real(wp), intent(in) :: pos(:,:)
         real(wp), intent(in) :: mass(:)
@@ -162,7 +146,7 @@ contains
         !   !$omp end distribute
         !   !$omp end target teams
     end subroutine calc_acc_tiled
-#ifdef TILED
+#endif ! TILED
 
     ! Computes the gravitational acceleration on every particle from every
     ! other particle: O(n^2) work, and the hottest part of the simulation by
@@ -228,52 +212,35 @@ contains
         end do
     end subroutine advance_pos
 
-    function run_sim(is_solar_system, plot, n_particles, n_steps) result(completion_time)
-        logical, intent(in) :: is_solar_system
-        logical, intent(in) :: plot
+    subroutine run_sim(n_particles, n_steps)
         integer, intent(in) :: n_particles
         integer, intent(in) :: n_steps
-        real(wp) :: completion_time
 
-        real(wp) :: dt, total_time, t, print_every, time_to_next_print
+        integer :: current_step = 0
+        integer :: print_every
+        real(wp) :: completion_time
+        real(wp) :: dt
+
         real(wp), allocatable :: pos(:,:), vel(:,:), mass(:)
         real(wp), allocatable :: acc(:,:), pos_temp(:,:), pos_prev(:,:)
         integer :: n, count_rate, count_start, count_end
         integer :: i
 
-        if (is_solar_system) then
-            print *, "Running regular solar system"
-            n = 9
-        else
-            print *, "Running with ", n_particles, " particles"
-            n = n_particles
-        end if
+        print *, "Running with ", n_particles, " particles"
+        n = n_particles
 
         dt = 0.01_wp
-        total_time = real(n_steps, wp) * dt
-        print_every = total_time / 10
-        time_to_next_print = 0
+        print_every = max(floor(real(n_steps) / 10), 1) ! Print every N steps
 
         allocate(pos(n, 2), vel(n, 2), mass(n))
         allocate(acc(n, 2), pos_temp(n, 2), pos_prev(n, 2))
 
-        if (is_solar_system) then
-            call create_solar_system(pos, vel, mass)
-        else
-            call generate_random_star_system(n, pos, vel, mass)
-        end if
+        call generate_random_star_system(n, pos, vel, mass)
 
-        ! TODO (Task 2a): this one-off call to calc_acc launches GPU kernels
-        ! (once you've done Task 1) with no target data region around it, so
-        ! pos, mass and acc are copied across PCIe on every kernel entry and
-        ! exit inside it. Wrap the call below in a `!$omp target data`
-        ! region: pos and mass only need to go *to* the device, acc only
-        ! needs to come back *from* it.
+        ! TODO (Task 2a)
         call calc_acc(acc, pos, mass)
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
-
-        t = 0.0_wp
 
         ! TODO (Task 2b): this is the main time-stepping loop. Every step it
         ! calls calc_acc and advance_pos, which together launch several GPU
@@ -292,13 +259,13 @@ contains
         !     useful value by the host, and never read by the host.
         ! (See the OpenMP map-type clauses: to, from, tofrom, alloc.)
         call system_clock(count_start, count_rate)
-        do while (t < total_time)
+        
+        do while (current_step < n_steps)
             call calc_acc(acc, pos, mass)
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
-            t = t + dt
-            if (t .gt. time_to_next_print) then
-              print *, "Remaining: ", total_time - t
-              time_to_next_print = time_to_next_print + print_every
+            current_step = current_step + 1
+            if (mod(current_step, print_every) .eq. 0) then
+              print *, "Complete: ", real(current_step) / real(n_steps) * 100
             end if
         end do
         call system_clock(count_end)
@@ -312,13 +279,10 @@ contains
         completion_time = real(count_end - count_start, wp) / real(count_rate, wp)
 
         print '(A, F10.4, A)', "Time to complete: ", completion_time, " s"
-
-        if (plot) then
-            print *, "Plotting is not implemented in standard Fortran. Please use a library like DISLIN or export data to CSV."
-        end if
+        print '(A, F10.4, A)', "Mean time per step: ", completion_time / n_steps, " s"
 
         deallocate(pos, vel, mass, acc, pos_temp, pos_prev)
-    end function run_sim
+    end subroutine run_sim
 
     subroutine assert_almost_equal(a, b, label)
         real(wp), intent(in) :: a(:,:), b(:,:)
@@ -418,9 +382,8 @@ program main
     implicit none
 
     integer :: i
-    integer :: n_particle_range = 1000
-    real(wp) :: runtimes
-    integer :: steps_arg, seed_arg, argc, iarg, stat
+    integer :: n_particles
+    integer :: steps_arg = 10, seed_arg, argc, iarg, stat
     logical :: seed_given
     integer :: seed_size
     integer, allocatable :: seed_array(:)
@@ -441,7 +404,7 @@ program main
                 print *, "Missing value for ", trim(arg)
                 stop 1
             end if
-            read(arg, *) n_particle_range
+            read(arg, *) n_particles
         case ('--steps')
             iarg = iarg + 1
             call get_command_argument(iarg, arg, status=stat)
@@ -482,15 +445,9 @@ program main
     end if
 
 
-    runtimes = run_sim(.false., .false., n_particle_range, steps_arg)
+    call run_sim(n_particles, steps_arg)
 
     if (ios == 0) close(file_unit)
-
-    print *, "Particle counts:"
-    print *, n_particle_range
-    print *, "Runtimes:"
-    print *, runtimes
-
 end program main
 #endif
 

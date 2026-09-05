@@ -53,7 +53,7 @@ force blowing up when two particles are nearly coincident.
 
 ### Build and run
 
-Two compilers matter here:
+Two compilers are used in this exercise:
 
 - **`gfortran`**, with no OpenMP flag, compiles `!$omp` lines as ordinary
   comments — this is how you get a pure CPU baseline, including from a file
@@ -63,13 +63,6 @@ Two compilers matter here:
   region, whether it turned into a GPU kernel.
 
 ```sh
-# CPU baseline (directives ignored)
-gfortran -cpp -DMAIN -O2 nbody_start.f90 -o main_cpu
-gfortran -cpp -DTEST -O2 nbody_start.f90 -o test_cpu
-
-# GPU offload build, once you've added directives
-nvfortran -cpp -DMAIN -mp=gpu -Minfo=mp nbody_start.f90 -o main_gpu
-nvfortran -cpp -DTEST -mp=gpu -Minfo=mp nbody_start.f90 -o test_gpu
 ```
 
 Run `./main_cpu` now and note the printed "Time to complete" — that's your
@@ -89,9 +82,13 @@ mind they only exercise 1–2 particles, so they can't catch every mistake
 There are three loops to offload, each marked with a `TODO (Task 1x)`
 comment in `nbody_start.f90`. **Use OpenMP to parallelise these.**
 
+**Hint**
+
 For each one: add `!$omp target teams distribute parallel do` on the line
 directly above the loop, and `!$omp end target teams distribute parallel
 do` directly below it (after the matching `end do`/`enddo`).
+
+---
 
 Build with `nvfortran -mp=gpu -Minfo=mp` after each change and check the
 compiler confirms it generated a GPU kernel for that loop. Then re-run the
@@ -439,6 +436,7 @@ Take a moment to note down, or discuss with someone nearby:
 
 ## Extension tasks
 
+- **Switch between double and single precision with `make ... DOUBLE_PRECISION=true`.** How does the performance change? Is the tiling optimisation still useful?
 - **Try `collapse`.** The pairwise loop in `calc_acc` is a perfect square
   (`i` and `j` both run `1..n`), but you only parallelised the outer `i`
   loop. Look up the `collapse` clause and see whether collapsing both loops
