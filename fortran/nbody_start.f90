@@ -1,13 +1,3 @@
-! ============================================================================
-! N-body simulation -- OpenMP target offload exercise, starting point.
-!
-! This is a correct, working CPU simulation. Your job is to accelerate it on
-! an Nvidia GPU using OpenMP `target` offloading, without changing what it
-! computes. Follow the tasks in README.md; the TODO comments below mark
-! where each one goes and are labelled to match (e.g. "TODO (Task 1a)").
-!
-! Do not change the maths in any subroutine -- only add OpenMP directives.
-! ============================================================================
 module nbody_simulation
     ! use iso_fortran_env, only: wp => real64
     implicit none
@@ -118,22 +108,12 @@ contains
         epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
 
         ! TODO (Task 1a): offload this loop to the GPU.
-        !
-        ! Add `!$omp target teams distribute parallel do` immediately above
-        ! the `do i = 1, n` line, and `!$omp end target teams distribute
-        ! parallel do` immediately after `enddo`.
         do i = 1, n
           acc(i,1) = 0.0_wp
           acc(i,2) = 0.0_wp
         enddo
 
         ! TODO (Task 1b): offload the pairwise force loop to the GPU.
-        !
-        ! This is the O(n^2) loop and does almost all of the work in the
-        ! program. Parallelise over the outer `i` loop the same way as
-        ! Task 1a -- `target teams distribute parallel do` goes on the
-        ! `do i = 1, n` line; the `j` loop underneath it stays a plain
-        ! sequential loop running on each GPU thread.
         do i = 1, n
             do j = 1, n
                 dx = pos(j,1) - pos(i,1)
@@ -161,8 +141,7 @@ contains
 
         n = size(pos, 1)
 
-        ! TODO (Task 1c): offload this loop to the GPU, the same way as
-        ! Task 1a.
+        ! TODO (Task 1c): offload this loop to the GPU
         do i=1,n
             pos_temp(i,1) = pos(i,1)
             pos_temp(i,2) = pos(i,2)
@@ -173,13 +152,14 @@ contains
         end do
     end subroutine advance_pos
 
-    function run_sim(is_solar_system, plot, n_particles) result(completion_time)
+    function run_sim(is_solar_system, plot, n_particles, n_steps) result(completion_time)
         logical, intent(in) :: is_solar_system
         logical, intent(in) :: plot
         integer, intent(in) :: n_particles
+        integer, intent(in) :: n_steps
         real(wp) :: completion_time
 
-        real(wp) :: dt, total_time, t
+        real(wp) :: dt, total_time, t, print_every, time_to_next_print
         real(wp), allocatable :: pos(:,:), vel(:,:), mass(:)
         real(wp), allocatable :: acc(:,:), pos_temp(:,:), pos_prev(:,:)
         integer :: n, count_rate, count_start, count_end
@@ -194,7 +174,9 @@ contains
         end if
 
         dt = 0.01_wp
-        total_time = 10.0_wp * dt
+        total_time = real(n_steps, wp) * dt
+        print_every = total_time / 10
+        time_to_next_print = 0
 
         allocate(pos(n, 2), vel(n, 2), mass(n))
         allocate(acc(n, 2), pos_temp(n, 2), pos_prev(n, 2))
@@ -238,6 +220,10 @@ contains
             call calc_acc(acc, pos, mass)
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
             t = t + dt
+            if (t .gt. time_to_next_print) then
+              print *, "Remaining: ", total_time - t
+              time_to_next_print = time_to_next_print + print_every
+            end if
         end do
         call system_clock(count_end)
 
@@ -306,7 +292,7 @@ contains
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [1.0, 0.0]
 
-        ! TODO (Task 3): this test calls calc_acc directly, outside of
+        ! TODO (Task 2c): this test calls calc_acc directly, outside of
         ! run_sim, so it needs its own target data region -- add the same
         ! kind of `!$omp target data` region you used for Task 2a around the
         ! call below.
@@ -356,19 +342,71 @@ program main
     implicit none
 
     integer :: i
-    !integer, dimension(5) :: n_particle_range = [800, 1600, 3200, 6400, 12800]
-    !real(wp), dimension(5) :: runtimes
-    integer, dimension(1) :: n_particle_range = [20000]
-    real(wp), dimension(1) :: runtimes
+    integer :: n_particle_range = 1000
+    real(wp) :: runtimes
+    integer :: steps_arg, seed_arg, argc, iarg, stat
+    logical :: seed_given
+    integer :: seed_size
+    integer, allocatable :: seed_array(:)
+    character(len=64) :: arg
+
+    steps_arg = 10
+    seed_given = .false.
+
+    argc = command_argument_count()
+    iarg = 1
+    do while (iarg <= argc)
+        call get_command_argument(iarg, arg)
+        select case (trim(arg))
+        case ('-n', '--particles')
+            iarg = iarg + 1
+            call get_command_argument(iarg, arg, status=stat)
+            if (stat /= 0) then
+                print *, "Missing value for ", trim(arg)
+                stop 1
+            end if
+            read(arg, *) n_particle_range
+        case ('--steps')
+            iarg = iarg + 1
+            call get_command_argument(iarg, arg, status=stat)
+            if (stat /= 0) then
+                print *, "Missing value for --steps"
+                stop 1
+            end if
+            read(arg, *) steps_arg
+        case ('--seed')
+            iarg = iarg + 1
+            call get_command_argument(iarg, arg, status=stat)
+            if (stat /= 0) then
+                print *, "Missing value for --seed"
+                stop 1
+            end if
+            read(arg, *) seed_arg
+            seed_given = .true.
+        case default
+            print *, "Unknown argument: ", trim(arg)
+            stop 1
+        end select
+        iarg = iarg + 1
+    end do
 
     open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
     if (ios /= 0) then
         print *, "Error opening trajectory.csv"
     end if
 
-    do i = 1, 1
-        runtimes(i) = run_sim(.false., .false., n_particle_range(i))
-    end do
+    if (seed_given) then
+        call random_seed(size=seed_size)
+        allocate(seed_array(seed_size))
+        seed_array = seed_arg
+        call random_seed(put=seed_array)
+        deallocate(seed_array)
+    else
+      call random_seed()
+    end if
+
+
+    runtimes = run_sim(.false., .false., n_particle_range, steps_arg)
 
     if (ios == 0) close(file_unit)
 

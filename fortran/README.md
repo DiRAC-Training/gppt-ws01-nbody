@@ -3,19 +3,40 @@
 You are given a working, CPU-only n-body simulation in a single source file,
 `nbody_start.f90`. It is correct and produces the right trajectories, but it
 runs entirely on the host. Your job is to accelerate it on an Nvidia GPU
-using OpenMP `target` offloading, **without changing the maths** — only add
+using OpenMP `target` offloading without changing the maths, only adding
 directives.
 
 You will make all of your changes in `nbody_start.f90`. `nbody.f90` in this
-same directory is the finished solution; try not to look at it until you've
-had a go.
+same directory is the finished solution — we recommend you attempt each task
+before checking it.
 
----
+This exercise assumes basic Fortran and some experience with OpenMP `parallel
+do` on the CPU. No prior CUDA or GPU experience is needed.
 
-## The code
+There are three main tasks. Task 1 gets the hot loops running on the GPU.
+Task 2 fixes the data transfers, which is where the actual speed shows up,
+and includes a short fix to a unit test that this leaves behind. Task 3
+asks you to confirm, with evidence rather than a feeling, that the work is
+really happening on the GPU. An optional advanced task at the end covers a
+shared-memory tiling optimisation.
+
+## What you'll learn
+
+By the end of this exercise you should be able to:
+
+- Offload a Fortran loop to an Nvidia GPU with OpenMP
+- Recognise when `target` regions require data transfers and implement them with `!$omp target data`
+- Choose the right OpenMP map type (`to`, `from`, `tofrom`, `alloc`) for a
+  given array
+- Confirm that code is running on the GPU
+- Implement a shared-memory tiling optimisation using nested
+  `distribute`/`parallel` regions and team-private arrays
+
+## Task 0: Understand the code
 
 The simulation is a 2D direct-summation n-body: every particle feels the
-gravitational pull of every other particle, so the acceleration calculation is O(N^2).
+gravitational pull of every other particle, so the acceleration calculation
+is O(N^2).
 
 | Subroutine / function       | What it does                                          |
 |------------------------------|-------------------------------------------------------|
@@ -59,38 +80,14 @@ what matters is the relative change as you complete each task, not matching
 these exactly.
 
 `./test_cpu` runs the unit tests and aborts if any fail. Keep them passing
-throughout — they're a cheap, fast check after every change, though bear in
+throughout — they're a cheap, fast check after every change. Bear in
 mind they only exercise 1–2 particles, so they can't catch every mistake
-(see Task 3).
+(see Task 2c).
 
----
-
-## Task 1 — Offload the compute kernels
-
-### Goal
-
-Get the two hot loops and the position update running on the GPU, using
-`!$omp target teams distribute parallel do` on each one.
-
-- `target` says "run this on the device".
-- `teams distribute` spreads the loop's iterations across GPU thread teams.
-- `parallel do` further splits each team's share across its threads.
-
-Used together on a loop's outer index, this is the standard way to map a
-parallelisable Fortran `do` loop onto the GPU with OpenMP.
-
-### What to do
+## Task 1: Offload the compute kernels
 
 There are three loops to offload, each marked with a `TODO (Task 1x)`
-comment in `nbody_start.f90`:
-
-1. **Task 1a** — the loop in `calc_acc` that zeroes `acc` before
-   accumulating into it.
-2. **Task 1b** — the pairwise force loop in `calc_acc`. This is the O(N²)
-   loop and does almost all of the work in the program. Put the directive on
-   the **outer** `i` loop only; the inner `j` loop stays a plain sequential
-   loop that each GPU thread runs on its own.
-3. **Task 1c** — the position-update loop in `advance_pos`.
+comment in `nbody_start.f90`. **Use OpenMP to parallelise these.**
 
 For each one: add `!$omp target teams distribute parallel do` on the line
 directly above the loop, and `!$omp end target teams distribute parallel
@@ -100,35 +97,31 @@ Build with `nvfortran -mp=gpu -Minfo=mp` after each change and check the
 compiler confirms it generated a GPU kernel for that loop. Then re-run the
 unit tests (`./test_gpu`) — they should still pass.
 
-### Checking you are right
-
-- `-Minfo=mp` should report a `Generating "nvkernel_..."` line for each of
-  the three loops once all of Task 1 is done.
-- Unit tests still pass.
-- The program is very likely **not faster yet**, possibly slower than the
-  CPU baseline. That's expected, not a bug — see Task 2.
+**Check your work:** `-Minfo=mp` should report a `Generating "nvkernel_..."`
+line for each of the three loops once all of Task 1 is done, and the unit
+tests should still pass. The program is very likely **not faster yet**,
+possibly slower than the CPU baseline. That's expected, not a bug — see
+Task 2.
 
 ---
 
 ## Task 2 — Stop shipping data across PCIe on every kernel launch
 
-### Goal
-
 With no data directives, every `target` region you added in Task 1 is its
 own island: on entry, OpenMP copies whatever it reads onto the device; on
 exit, it copies back whatever it wrote. `calc_acc` and `advance_pos` are
 each called once per time step, so right now you're paying a host↔device
-transfer for `pos`, `mass`, `acc` and `pos_prev` on **every single step**,
-even though the arrays already hold the right values on the device from the
-step before.
+transfer over PCIe (the bus linking host and device memory, and far slower
+than either side's own memory) for `pos`, `mass`, `acc` and `pos_prev` on
+**every single step**, even though the arrays already hold the right values
+on the device from the step before.
 
 The fix is `!$omp target data`, which opens a region that keeps its mapped
 arrays resident on the device for as long as the region is open, regardless
-of how many `target` kernels run inside it.
-
-### What to do
-
-Two more `TODO` comments in `run_sim`:
+of how many `target` kernels run inside it. Three more `TODO` comments mark
+where it goes — two in `run_sim`, one in the `test_calc_acc` unit test.
+Task 2a is worked through for you below — use the same reasoning yourself
+for Task 2b before checking the source.
 
 1. **Task 2a** — the one-off call to `calc_acc` that computes the initial
    acceleration, before the main loop. Wrap it in a `target data` region.
@@ -148,57 +141,69 @@ Two more `TODO` comments in `run_sim`:
    - `map(alloc: ...)` — the device needs space, but neither side cares
      about the other's values (pure scratch).
 
-   Ask, for each of `pos`, `mass`, `pos_prev`, `acc`, `pos_temp`: does the
-   *host* ever need this array's final value after the loop, and does the
-   *device* ever need a value the host set before the loop?
+   Before you look at the `TODO` comment for Task 2b in the source, try
+   answering this yourself for `pos`, `mass`, `pos_prev`, `acc` and
+   `pos_temp`: does the *host* ever need this array's final value after the
+   loop, and does the *device* ever need a value the host set before the
+   loop? The source comment will confirm your reasoning, not replace it.
+3. **Task 2c** — `test_calc_acc` calls `calc_acc` directly, not through
+   `run_sim`, so it never benefits from the `target data` region you added
+   in Task 2b — it's its own island, same as Task 1 was before Task 2.
+   There's a `TODO (Task 2c)` comment right above the first call to
+   `calc_acc` in `test_calc_acc`. Give it the same kind of `target data`
+   region you used for Task 2a.
 
-### Checking you are right
+   Now look a few lines further down, at the *second* call to `calc_acc` in
+   the same test, on the same arrays. Does it need a `target data` region
+   too?
 
-- Unit tests still pass.
-- The GPU build should now be substantially faster than the CPU baseline —
-  not just faster than your Task 1 result. If it isn't, you've probably
-  mapped something `tofrom` that only needed `alloc`, or vice versa (a
-  `tofrom`/`from` where an `alloc` would do just adds unneeded transfer; an
-  `alloc` where the host actually needed the result gives you stale or
-  garbage data on the host — which the next check will catch).
-- Compare `trajectory.csv` from `./main_gpu` against a copy saved from
-  `./main_cpu`. The physics hasn't changed, so the numbers should agree to
-  the precision written out. If they don't, you likely mapped `pos` (or
-  something it depends on) the wrong way and the host is reading a stale or
-  uninitialised copy.
+   <details>
+   <summary>Hint</summary>
+
+   Without a `target data` region, `calc_acc`'s own `target` constructs
+   still map their arrays in and out correctly on every entry and exit —
+   nothing about the result is wrong. Is leaving it as-is a correctness
+   problem, or only a performance one? And how much performance is
+   actually on the line for a call that only runs once, on two particles,
+   at start-up?
+
+   </details>
+
+   <details>
+   <summary>Solution</summary>
+
+   No — leave it without one. It relies on `calc_acc`'s own `target`
+   regions doing implicit mapping on entry/exit, which is correct (if
+   inefficient) on its own. Not every call needs an explicit data region,
+   only the ones that matter for performance. Recognising the difference
+   is the point of this task.
+
+   </details>
+
+**Check your work:** unit tests still pass (including `test_calc_acc`), and
+the GPU build should now be substantially faster than the CPU baseline —
+not just faster than your Task 1 result. If it isn't, you've probably
+mapped something `tofrom` that only needed `alloc`, or vice versa (a
+`tofrom`/`from` where an `alloc` would do just adds unneeded transfer; an
+`alloc` where the host actually needed the result gives you stale or
+garbage data on the host — which the next check will catch). Then compare
+`trajectory.csv` from `./main_gpu` against a copy saved from `./main_cpu`.
+The physics hasn't changed, so the numbers should agree to the precision
+written out. If they don't, you likely mapped `pos` (or something it
+depends on) the wrong way and the host is reading a stale or uninitialised
+copy. Task 2c only affects a test that runs once at start-up, so it should
+not change the timed portion of `./main_gpu` at all.
+
+### Reflection
+
+Before moving on, note down or discuss: which of `pos`, `mass`, `pos_prev`,
+`acc` and `pos_temp` did you get wrong on your first attempt, if any — and
+what was it about that array's role that you'd misjudged? This is the
+single biggest conceptual jump in the exercise; the rest builds on it.
 
 ---
 
-## Task 3 — Fix the unit test
-
-### Goal
-
-`test_calc_acc` calls `calc_acc` directly, not through `run_sim`, so it
-never benefits from the `target data` region you added in Task 2 — it's
-its own island, same as Task 1 was before Task 2.
-
-### What to do
-
-There's a `TODO (Task 3)` comment right above the first call to `calc_acc`
-in `test_calc_acc`. Give it the same kind of `target data` region you used
-for Task 2a.
-
-Note the *second* call to `calc_acc` a few lines later, on the same arrays,
-is deliberately left without one — it relies on `calc_acc`'s own `target`
-regions doing implicit mapping on entry/exit, which is correct (if
-inefficient) on its own. This mirrors the finished solution: not every
-call needs an explicit data region, only the ones that matter for
-performance. Recognising the difference is the point of this task.
-
-### Checking you are right
-
-- `./test_gpu` passes, including `test_calc_acc`.
-- This task only affects a test that runs once at start-up — it should not
-  change the timed portion of `./main_gpu` at all.
-
----
-
-## Task 4 — Measure and confirm it's really running on the GPU
+## Task 3 — Measure and confirm it's really running on the GPU
 
 Passing tests and a lower printed time are good signs, but they don't prove
 the work is on the GPU rather than, say, silently falling back to the host.
@@ -220,14 +225,26 @@ Once you're confident it's genuinely running on the GPU, compare the
 printed "Time to complete" between `./main_cpu` and `./main_gpu` at a couple
 of different particle counts (edit `n_particle_range` in the `MAIN` program
 block). How does the speedup change as N grows? Since the hot loop is
-O(N²), think about what that implies for how much of the total time is
+O(N^2), think about what that implies for how much of the total time is
 spent in `calc_acc` versus everything else, at small vs. large N.
+
+### Reflection
+
+Take a moment to note down, or discuss with someone nearby:
+
+- If you were handed a piece of GPU code you hadn't written, what's the
+  quickest way to tell whether a repeated kernel call needs an explicit
+  `target data` region around it?
+- The compiler happily generates a kernel for a `target` region with the
+  wrong map type — it isn't a compile error, and it might not even be a
+  crash. Given that, what's your own answer to "how do I know my mapping is
+  right"?
 
 ---
 
 ## Advanced Task (optional) — Tiling for GPU Shared-Memory Reuse
 
-This task is a bigger structural change than Tasks 1-4, and assumes you've
+This task is a bigger structural change than Tasks 1-3, and assumes you've
 completed those first. It's entirely optional — a good thing to reach for if
 you finish early, or to come back to later.
 
@@ -295,12 +312,10 @@ tile's load until everyone's finished reading this one).
 ### Starting point
 
 `nbody_tiled_start.f90` is what you edit — it's a copy of the finished
-Tasks 1-4 solution with an empty `calc_acc_tiled` stub. `nbody_tiled.f90`
+Tasks 1-3 solution with an empty `calc_acc_tiled` stub. `nbody_tiled.f90`
 in this same directory is the finished solution to this task; try not to
 look at it until you've had a go, the same as `nbody.f90` for the main
 exercise.
-
-### What to do
 
 `calc_acc_tiled` in `nbody_tiled_start.f90` has `TODO (Task 5a)` through
 `TODO (Task 5h)` comments marking each piece, in order:
@@ -328,27 +343,40 @@ Then two more steps, also marked with `TODO` comments:
   isn't testing your new subroutine at all. Point its calls at
   `calc_acc_tiled`, then add it to the `#ifdef TEST` program block.
 
-**Hint 1 — the self-interaction term.** Don't special-case `j == i`: it's
-naturally visited once, inside whichever tile it falls in, with
-`dx = dy = 0`, and contributes exactly zero — same as in `calc_acc`.
+<details>
+<summary>Hint — the self-interaction term</summary>
 
-**Hint 2 — padding, not branching, for the last tile.** `n` won't usually
-be a whole multiple of `TILE`, so the last tile is only partly full.
-`!$omp barrier` requires *every* thread in the team to reach it. If a
-thread with nothing to load skips its write with an early branch that also
-jumps past the barrier, the threads that do reach the barrier wait for one
-that never arrives. Instead, give every thread the same control-flow path
-through both barriers, and make the unused slots harmless by padding them
-with `mass = 0` — a particle with zero mass contributes nothing to the sum,
-so no extra condition is needed in the inner loop.
+Don't special-case `j == i`: it's naturally visited once, inside whichever
+tile it falls in, with `dx = dy = 0`, and contributes exactly zero — same
+as in `calc_acc`.
 
-**Hint 3 — why `TILE` has to be a compile-time constant.** It sizes the
-shared arrays, and it also becomes `thread_limit` — the number of threads
-launched per team. Both have to be known when the code is compiled, the
-same reason CUDA's tiled kernel needs a `const int` block size rather than
-a runtime variable.
+</details>
 
-### Checking you are right
+<details>
+<summary>Hint — padding, not branching, for the last tile</summary>
+
+`n` won't usually be a whole multiple of `TILE`, so the last tile is only
+partly full. `!$omp barrier` requires *every* thread in the team to reach
+it. If a thread with nothing to load skips its write with an early branch
+that also jumps past the barrier, the threads that do reach the barrier
+wait for one that never arrives. Instead, give every thread the same
+control-flow path through both barriers, and make the unused slots harmless
+by padding them with `mass = 0` — a particle with zero mass contributes
+nothing to the sum, so no extra condition is needed in the inner loop.
+
+</details>
+
+<details>
+<summary>Hint — why TILE has to be a compile-time constant</summary>
+
+It sizes the shared arrays, and it also becomes `thread_limit` — the
+number of threads launched per team. Both have to be known when the code is
+compiled, the same reason CUDA's tiled kernel needs a `const int` block
+size rather than a runtime variable.
+
+</details>
+
+**Check your work:**
 
 - `-Minfo=mp` reports `calc_acc_tiled` generating a GPU kernel, **and** the
   `Team private (...) located in CUDA shared memory` line — confirming
@@ -387,17 +415,29 @@ a runtime variable.
   memory side. That's a real, useful result to be able to explain, not
   something to treat as a failed optimisation.
 
-### If you want to go further
+**If you want to go further:** sweep `TILE` (32/64/128/256) and see whether
+it changes anything, in either precision. If you have profiler access,
+compare Compute (SM) Throughput against memory throughput for `calc_acc` vs
+`calc_acc_tiled` at both precisions with `ncu`/`nsys` — that will show you
+directly which resource each kernel is limited by, rather than inferring it
+from timing alone.
 
-Sweep `TILE` (32/64/128/256) and see whether it changes anything, in either
-precision. If you have profiler access, compare Compute (SM) Throughput
-against memory throughput for `calc_acc` vs `calc_acc_tiled` at both
-precisions with `ncu`/`nsys` — that will show you directly which resource
-each kernel is limited by, rather than inferring it from timing alone.
+### Reflection
+
+Take a moment to note down, or discuss with someone nearby:
+
+- Tiling bought you ~30% in single precision but close to nothing in double
+  precision, on the same GPU, on the same code. Before reading that result,
+  would you have guessed a data-reuse optimisation could depend on floating
+  point precision at all? What does that tell you about deciding whether an
+  optimisation is worth the extra complexity, in your own work?
+- Everything in this exercise had one particle per thread. What do you
+  think changes about the tiling logic — the indexing, the barriers, the
+  padding — if a thread instead owned several particles?
 
 ---
 
-## If you finish early
+## Extension tasks
 
 - **Try `collapse`.** The pairwise loop in `calc_acc` is a perfect square
   (`i` and `j` both run `1..n`), but you only parallelised the outer `i`
@@ -414,3 +454,23 @@ each kernel is limited by, rather than inferring it from timing alone.
   `nsys stats --report cuda_gpu_mem_time_sum report.nsys-rep` will show any
   remaining host/device transfers. Is there anything left to move into the
   `target data` region, or any transfer you didn't expect?
+
+### References
+
+- [OpenMP Application Programming Interface, version 5.2](https://www.openmp.org/spec-html/5.2/openmp.html)
+  — the authoritative reference for every directive and map type used here.
+- [NVIDIA HPC SDK: OpenMP GPU Programming with the NVIDIA HPC Compilers](https://docs.nvidia.com/hpc-sdk/compilers/openmp-gpu/index.html)
+  — `nvfortran`-specific detail on how `target` regions map onto CUDA
+  concepts, including shared memory placement for `private` arrays.
+
+---
+
+Getting a loop to run on the GPU (Task 1) turned out to be the easy part.
+Everything else in this exercise was really about one idea: a GPU is only
+fast if the data it needs is already there. Whether that meant keeping
+arrays resident across a whole time-stepping loop (Task 2), not bothering
+for a call where the overhead doesn't matter (Task 2c), or restructuring a
+kernel so a block's threads share one read from global memory instead of
+each paying for their own (the Advanced task) — the question underneath
+all of it was the same one: what does the device actually need, and when.
+That question is worth carrying into any GPU code you write from here on.

@@ -8,7 +8,7 @@
 ! from scratch. The TODO comments below (Task 5a-5j) mark where each step
 ! goes and are labelled to match.
 !
-! This file assumes you've already completed the main exercise (Tasks 1-4):
+! This file assumes you've already completed the main exercise (Tasks 1-3):
 ! calc_acc, advance_pos and run_sim below are already fully offloaded, the
 ! same as the finished nbody.f90. run_sim currently calls the plain,
 ! untiled calc_acc -- Task 5i is switching it over to calc_acc_tiled once

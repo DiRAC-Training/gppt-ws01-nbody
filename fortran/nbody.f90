@@ -127,6 +127,107 @@ contains
         !$omp end target teams distribute parallel do
     end subroutine calc_acc
 
+    ! Tiled version of calc_acc's pairwise loop. Each GPU thread still owns
+    ! exactly one particle `i` and accumulates its own acceleration, same as
+    ! calc_acc -- what changes is *how* it reads the source particles `j`.
+    !
+    ! Instead of every thread independently re-reading all n entries of pos
+    ! and mass from global memory, threads within a team cooperatively stage
+    ! one tile (TILE particles) into team-shared arrays, all threads in the
+    ! team consume that tile from shared memory, then the team moves on to
+    ! the next tile. This makes the reuse explicit instead of hoping the
+    ! cache catches it.
+    !
+    !   for each tile of source particles:
+    !       every thread loads one particle into the shared tile arrays
+    !       <barrier: wait for the whole tile to be loaded>
+    !       every thread accumulates its own acceleration from the tile
+    !       <barrier: wait for everyone to finish reading before it's overwritten>
+    !
+    ! One CUDA block == one OpenMP team == one iteration of the `distribute`
+    ! loop below; one CUDA thread == one OpenMP thread of the nested
+    ! `parallel` region. TILE doubles as both the tile size and the team
+    ! (block) size, same as ../cuda/nbody_tiled.cu.
+#ifdef TILED
+    subroutine calc_acc_tiled(acc, pos, mass)
+        use omp_lib, only: omp_get_thread_num
+        real(wp), intent(inout) :: acc(:,:)
+        real(wp), intent(in) :: pos(:,:)
+        real(wp), intent(in) :: mass(:)
+
+        integer, parameter :: TILE = 128
+        integer :: n, num_teams_needed
+        integer :: team_id, tid, i, t, tile_start, j
+        real(wp) :: epsilon, dx, dy, dist_sq, inv_dist_cube, ax, ay
+        ! Team-private tile-staging arrays. Privatized (one instance per
+        ! team, shared by that team's threads) by the `private()` clause on
+        ! `distribute` below, not by an explicit allocator -- see the file
+        ! header comment for why.
+        real(wp) :: pos_s(TILE, 2)
+        real(wp) :: mass_s(TILE)
+
+        n = size(pos, 1)
+        epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
+        num_teams_needed = (n + TILE - 1) / TILE
+
+        !$omp target teams num_teams(num_teams_needed) thread_limit(TILE) &
+        !$omp&   map(to: pos, mass) map(tofrom: acc)
+        !$omp distribute private(pos_s, mass_s)
+        do team_id = 0, num_teams_needed - 1
+            !$omp parallel private(tid, i, ax, ay, t, tile_start, j, dx, dy, dist_sq, inv_dist_cube)
+            tid = omp_get_thread_num()
+            i = team_id * TILE + tid + 1
+            ax = 0.0_wp
+            ay = 0.0_wp
+
+            do t = 0, num_teams_needed - 1
+                tile_start = t * TILE
+
+                ! Cooperative load: each thread stages exactly one source
+                ! particle. Threads past the end of a partly-full final tile
+                ! pad with mass = 0, which contributes exactly nothing to
+                ! the sum below -- that's what lets every thread take the
+                ! same path through both barriers with no branch in the
+                ! inner loop. (See ../cuda/nbody_tiled.cu, Hint 4, for the
+                ! same reasoning in CUDA.)
+                if (tile_start + tid + 1 <= n) then
+                    pos_s(tid+1, 1) = pos(tile_start + tid + 1, 1)
+                    pos_s(tid+1, 2) = pos(tile_start + tid + 1, 2)
+                    mass_s(tid+1)   = mass(tile_start + tid + 1)
+                else
+                    pos_s(tid+1, 1) = 0.0_wp
+                    pos_s(tid+1, 2) = 0.0_wp
+                    mass_s(tid+1)   = 0.0_wp
+                end if
+                !$omp barrier
+
+                ! The self-interaction term (source particle == i) is not
+                ! special-cased: it's still visited here with dx = dy = 0,
+                ! contributing exactly zero, same as in calc_acc.
+                if (i <= n) then
+                    do j = 1, TILE
+                        dx = pos_s(j,1) - pos(i,1)
+                        dy = pos_s(j,2) - pos(i,2)
+                        dist_sq = dx**2 + dy**2 + epsilon**2
+                        inv_dist_cube = 1.0_wp / (dist_sq * sqrt(dist_sq))
+                        ax = ax + dx * mass_s(j) * inv_dist_cube
+                        ay = ay + dy * mass_s(j) * inv_dist_cube
+                    end do
+                end if
+                !$omp barrier
+            end do
+
+            if (i <= n) then
+                acc(i,1) = ax
+                acc(i,2) = ay
+            end if
+            !$omp end parallel
+        end do
+        !$omp end distribute
+        !$omp end target teams
+    end subroutine calc_acc_tiled
+#endif
+
     subroutine advance_pos(acc, pos, pos_prev, pos_temp, dt)
         real(wp), intent(in) :: acc(:,:)
         real(wp), intent(inout) :: pos(:,:)
@@ -182,7 +283,11 @@ contains
         end if
 
         !$omp target data map(to: pos, mass) map(from: acc)
+#ifdef TILED
+        call calc_acc_tiled(acc, pos, mass)
+#else
         call calc_acc(acc, pos, mass)
+#endif
         !$omp end target data
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
@@ -192,7 +297,11 @@ contains
         !$omp target data map(tofrom: pos) map(to:mass, pos_prev) map(alloc: acc, pos_temp)
         call system_clock(count_start, count_rate)
         do while (t < total_time)
-            call calc_acc(acc, pos, mass)
+#ifdef TILED
+        call calc_acc_tiled(acc, pos, mass)
+#else
+        call calc_acc(acc, pos, mass)
+#endif
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
             t = t + dt
         end do
@@ -265,7 +374,11 @@ contains
         pos(2, :) = [1.0, 0.0]
         
         !$omp target data map(to: pos, mass) map(from: acc)
+#ifdef TILED
+        call calc_acc_tiled(acc, pos, mass)
+#else
         call calc_acc(acc, pos, mass)
+#endif
         !$omp end target data
         epsilon = 1.1 * (2.0**(-0.48))
         
@@ -276,7 +389,11 @@ contains
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [0.0, 1.0]
         
+#ifdef TILED
+        call calc_acc_tiled(acc, pos, mass)
+#else
         call calc_acc(acc, pos, mass)
+#endif
         expected_acc(1, :) = [0.0, 1.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
         expected_acc(2, :) = -[0.0, 1.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
         call assert_almost_equal(acc, expected_acc, "test_calc_acc vertical")
