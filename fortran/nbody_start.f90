@@ -93,6 +93,77 @@ contains
         mass(1) = 1.0_wp
     end subroutine create_solar_system
 
+#ifdef TILED
+    subroutine calc_acc_tiled(acc, pos, mass)
+        real(wp), intent(inout) :: acc(:,:)
+        real(wp), intent(in) :: pos(:,:)
+        real(wp), intent(in) :: mass(:)
+
+        ! TODO (Task 5a): declare TILE as a compile-time constant (try 128)
+        ! -- it's both the tile size and the team (thread-block) size, the
+        ! same reason CUDA's tiled kernel needs `const int` rather than a
+        ! variable for its block size. Then declare the two team-private
+        ! tile-staging arrays it sizes: pos_s(TILE, 2) and mass_s(TILE).
+        ! You'll also need locals for: n, epsilon (identical role to
+        ! calc_acc's), num_teams_needed, team_id, tid, i, t, tile_start, j,
+        ! ax, ay, dx, dy, dist_sq, inv_dist_cube -- compare with calc_acc
+        ! for which of these play the same role its i/j/dx/dy/... do. You
+        ! will also need `use omp_lib, only: omp_get_thread_num`.
+
+        ! TODO (Task 5b): compute n and epsilon exactly as calc_acc does,
+        ! then num_teams_needed from n and TILE (round up -- how many teams
+        ! of TILE particles each does it take to cover n particles?). Then
+        ! open the teams/distribute/parallel skeleton:
+        !   !$omp target teams num_teams(num_teams_needed) thread_limit(TILE) &
+        !   !$omp&   map(to: pos, mass) map(tofrom: acc)
+        !   !$omp distribute private(pos_s, mass_s)
+        !   do team_id = 0, num_teams_needed - 1
+        !       !$omp parallel private(tid, i, ax, ay, t, tile_start, j, dx, dy, dist_sq, inv_dist_cube)
+        ! The `private()` clause on `distribute` is what gives each team its
+        ! own instance of pos_s/mass_s, shared by that team's threads --
+        ! this is the OpenMP mechanism the "Advanced Task" section explains.
+
+        ! TODO (Task 5c): get tid from omp_get_thread_num(), then this
+        ! thread's global particle index i from team_id, TILE and tid
+        ! (compare: how does a CUDA kernel compute its global thread index
+        ! from blockIdx, blockDim and threadIdx?). Zero this thread's
+        ! accumulator, ax and ay -- the same role acc(i,:) = 0 plays at the
+        ! start of calc_acc.
+
+        ! TODO (Task 5d): outer loop over tiles, `do t = 0, num_teams_needed - 1`,
+        ! tile_start = t * TILE. Cooperative load: each thread copies
+        ! exactly one source particle -- global index tile_start + tid + 1
+        ! -- into pos_s(tid+1,:) and mass_s(tid+1). Guard against reading
+        ! past the end of pos/mass on the last, partly-full tile: pad with
+        ! zeros there instead of skipping the write (see the hint on
+        ! padding vs. branching in README.md -- skipping it will break the
+        ! barrier below for some threads).
+
+        ! TODO (Task 5e): first barrier (`!$omp barrier`). Nobody may read
+        ! the tile until every thread in the team has finished loading it.
+
+        ! TODO (Task 5f): accumulate into ax/ay from every slot of this tile
+        ! (`do j = 1, TILE`), using pos_s/mass_s in place of the pos/mass
+        ! calc_acc's j loop reads -- same force maths, just a different
+        ! source array. Only threads with a real particle (i <= n) should
+        ! do this; note you do NOT need to skip j == i here, the same as
+        ! calc_acc doesn't -- it's naturally visited once (dx = dy = 0) and
+        ! contributes exactly zero.
+
+        ! TODO (Task 5g): second barrier. Nobody may start loading the next
+        ! tile until every thread has finished reading this one. This ends
+        ! the tile loop (`end do`).
+
+        ! TODO (Task 5h): write this thread's final ax/ay into acc(i,:),
+        ! guarded by i <= n. Then close the parallel region, the distribute
+        ! loop, and the target teams region:
+        !   !$omp end parallel
+        !   end do
+        !   !$omp end distribute
+        !   !$omp end target teams
+    end subroutine calc_acc_tiled
+#ifdef TILED
+
     ! Computes the gravitational acceleration on every particle from every
     ! other particle: O(n^2) work, and the hottest part of the simulation by
     ! far. This is the first thing to move onto the GPU.
@@ -103,6 +174,11 @@ contains
 
         integer :: i, j, n
         real(wp) :: epsilon, dx, dy, dist_sq, inv_dist_cube
+
+#ifdef TILED
+        call calc_acc_tiled(acc, pos, mass)
+        return
+#endif
 
         n = size(pos, 1)
         epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))

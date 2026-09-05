@@ -2,8 +2,8 @@ module nbody_simulation
     ! use iso_fortran_env, only: wp => real64
     implicit none
 
-    ! integer, parameter :: wp = kind(1.0d0)
-    integer, parameter :: wp = selected_real_kind(6, 37)
+    ! integer, parameter :: wp = kind(1.0d0) ! double precision
+    integer, parameter :: wp = selected_real_kind(6, 37) ! single precision
     real(wp), parameter :: PI = 3.14159265358979323846_wp
     real(wp), parameter :: N_YEARS = 0.1_wp
     integer :: file_unit, ios
@@ -101,6 +101,11 @@ contains
 
         integer :: i, j, n
         real(wp) :: epsilon, dx, dy, dist_sq, inv_dist_cube
+
+#ifdef TILED
+        call calc_acc_tiled(acc, pos, mass)
+        return
+#endif
 
         n = size(pos, 1)
         epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
@@ -283,11 +288,7 @@ contains
         end if
 
         !$omp target data map(to: pos, mass) map(from: acc)
-#ifdef TILED
-        call calc_acc_tiled(acc, pos, mass)
-#else
         call calc_acc(acc, pos, mass)
-#endif
         !$omp end target data
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
@@ -297,11 +298,7 @@ contains
         !$omp target data map(tofrom: pos) map(to:mass, pos_prev) map(alloc: acc, pos_temp)
         call system_clock(count_start, count_rate)
         do while (t < total_time)
-#ifdef TILED
-        call calc_acc_tiled(acc, pos, mass)
-#else
-        call calc_acc(acc, pos, mass)
-#endif
+            call calc_acc(acc, pos, mass)
             call advance_pos(acc, pos, pos_prev, pos_temp, dt)
             t = t + dt
         end do
@@ -374,11 +371,7 @@ contains
         pos(2, :) = [1.0, 0.0]
         
         !$omp target data map(to: pos, mass) map(from: acc)
-#ifdef TILED
-        call calc_acc_tiled(acc, pos, mass)
-#else
         call calc_acc(acc, pos, mass)
-#endif
         !$omp end target data
         epsilon = 1.1 * (2.0**(-0.48))
         
@@ -389,11 +382,7 @@ contains
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [0.0, 1.0]
         
-#ifdef TILED
-        call calc_acc_tiled(acc, pos, mass)
-#else
         call calc_acc(acc, pos, mass)
-#endif
         expected_acc(1, :) = [0.0, 1.0] * mass(2) * (1.0 + epsilon**2)**(-1.5)
         expected_acc(2, :) = -[0.0, 1.0] * mass(1) * (1.0 + epsilon**2)**(-1.5)
         call assert_almost_equal(acc, expected_acc, "test_calc_acc vertical")
