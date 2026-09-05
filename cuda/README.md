@@ -359,19 +359,18 @@ Note: making the block and tile the same size makes some of our indexing easier 
 
 **(Optional) Look at the makefile to see how `BLOCK_SIZE` can be passed from `make` to the code during compilation. Implement an `#ifdef` around your definition of `block_size` to allow setting `block_size` to the value of `BLOCK_SIZE` passed to the compiler.**
 
-**Solution**
-
-Previously, `block_size` could be set on the command line with a flag which made varying it easy. In order to 
-
 **TODO 2: Calculating the thread index**
 
 It's the same as every time before. You got this.
 
-**Solution**
+<details>
+<summary>Solution</summary>
 
 ```cpp
 const int gtid = blockIdx.x * blockDim.x + threadIdx.x;
 ```
+
+</details>
 
 **TODO 3 & 4: Global and local indices**
 
@@ -379,7 +378,8 @@ Now we're inside the loop over tiles and we need to populate the shared arrays w
 
 **What should the value of both these indices be?**
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 It's useful to consider this from the perspective of one block of threads all running in parallel. Each thread inside the block has a unique index assigned to it in `threadIdx.x`. Since we chose to make the tile size and block size equal, we can also use this value to index into the shared memory space. So the local index should be:
 
@@ -387,7 +387,10 @@ It's useful to consider this from the perspective of one block of threads all ru
 shMass[threadIdx.x] = (idx < N) ? mass[idx] : real(0.0);
 ```
 
-**Hint**
+</details>
+
+<details>
+<summary>Hint</summary>
 
 The point of this algorithm is to process the data one tile at a time, in chunks of size `block_size`. So the first time through the outer tile loop, `tile_start == 0`, and we copy all values from 0 to `block_size` into the shared memory:
 
@@ -411,11 +414,14 @@ So the global index into `pos` and `mass` must combine the offset into the globa
 const int idx = tile_start + threadIdx.x;
 ```
 
+</details>
+
 **TODO 5: What variables do we access?**
 
 **Fill in the appropriate arguments in the call to `calc_acc_pair`.**
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 The first argument is actually the same as before. Each instance of the kernel still owns the calculation for the i-th particle, so the call should look like:
 
@@ -423,7 +429,10 @@ The first argument is actually the same as before. Each instance of the kernel s
 calc_acc_pair(pi, TODO, TODO, eps)
 ```
 
-**Hint**
+</details>
+
+<details>
+<summary>Hint</summary>
 
 Previously the `calc_acc_pair` call looked like this:
 
@@ -433,11 +442,16 @@ calc_acc_pair(pi, pos[j], mass[j], eps)
 
 But now, we've saved a tile of `pos[j]` and `mass[j]` to shared memory. Access the equivalent values in shared memory.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```cpp
 calc_acc_pair(pi, shPosition[j], shMass[j], eps);
 ```
+
+</details>
 
 **TODO 6: When to sync?**
 
@@ -445,7 +459,8 @@ Consider this algorithm without synchronisation and remember this kernel is run 
 
 **Consider the three suggested synchronisation points. Which should be implemented?**
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 We've already described a situation where faster threads could access unpopulated data, so we need a sync after the copy into shared memory:
 
@@ -457,11 +472,17 @@ shMass[threadIdx.x] = (idx < N) ? mass[idx] : real(0.0);
 __syncthreads();
 ```
 
-**Hint**
+</details>
+
+<details>
+<summary>Hint</summary>
 
 We also need a synchronisation point before we start copying a new tile. **Why?**
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 Again, some threads will process faster than others, so if a fast thread were finished with processing, it would continue on into the next iteration of the tile loop and start copying the next tile's data into shared memory, *overwriting the existing data* and potentially affecting any slow threads that are still processing that tile. So we need a sync point *either* before the tile copy operation, or after processing, as in the solution:
 
@@ -475,11 +496,14 @@ for (int j = 0; j < block_size; j++) {
 __syncthreads();
 ```
 
+</details>
+
 **TODO 7: Where to store the result?**
 
 **Where in the global array should this thread's `accl` be stored?**
 
-**Solution**
+<details>
+<summary>Solution</summary>
 
 The tiling part of this algorithm only affects the way in which the `j` particles are processed. We've kept the convention of assigning one `i` particle per thread, so just as we load the position as before, `pos[gtid]` we can store `accl` in the same place as before:
 
@@ -488,13 +512,18 @@ if (gtid < N)
   acc[gtid] = accl;
 ```
 
+</details>
+
 **TODO 8: What's with the `?:` operators?**
 
 You'll have noticed the use of operators like `(idx < N) ? pos[idx] : Vec2{0.0, 0.0}`. **Can you think why we've done this?**
 
-**Solution**
+<details>
+<summary>Solution</summary>
 
 We guard with ternary as threads trying to access `i >= N` cannot return early - they must still reach every `__syncthreads()` and help load tiles for the rest of the block. Alternatively, using padding avoids this branching.
+
+</details>
 
 ---
 
