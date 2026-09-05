@@ -73,7 +73,7 @@ void dump_to_file(const std::string &fname, const vector<Vec2> &pos) {
     }
     out.close();
   } else
-    std::cout << "Unable to open file";
+    std::cout << "Unable to open file: " << fname << "\n";
 }
 
 /// Format integer into CSV filename

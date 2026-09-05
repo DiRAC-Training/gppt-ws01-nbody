@@ -64,35 +64,39 @@ __global__ void calc_acc(Vec2 *acc, const Vec2 *pos, const real *mass, uint N,
 /// Calculate acceleration on each particle due to every other particle
 __global__ void calc_acc_tiled(Vec2 *acc, const Vec2 *pos, const real *mass,
                                uint N, real eps = 0.0) {
-  // __shared__ Vec2 shPosition[block_size];
-  // __shared__ ???; // TODO 1 Declare a similar array for mass
-  //
-  // const int gtid = ???; // TODO 2 calculate the thread index as normal
-  // const Vec2 pi = (gtid < N) ? pos[gtid] : Vec2{0.0, 0.0}; // TODO 8 why use
-  // these guards? Vec2 accl = {0.0, 0.0};
-  //
-  // // Introduce a new loop over each tile
-  // for (int tile_start = 0; tile_start < N; tile_start += block_size) {
-  //   // TODO 6 do we need to sync here?
-  //
-  //   // Each thread caches a position and mass from the current tile.
-  //   const int idx = ??? + threadIdx.x; // TODO 3 How do we calculate the
-  //   offset into the tile from tile_start? shPosition[???] = (idx < N) ?
-  //   pos[idx] : Vec2{0.0, 0.0}; // TODO 4 How do we index into our tile?
-  //   shMass[???] = (idx < N) ? mass[idx] : real(0.0);
-  //   // TODO 6 do we need to sync here?
-  //
-  //   // Each thread loops across the entire tile
-  //   for (int j = 0; j < block_size; j++) {
-  //     // Add the acceleration from jth particle to this
-  //     const Vec2 accll = calc_acc_pair(TODO, TODO, TODO, eps); // TODO 5 What
-  //     variables do we pass in here? accl.x += accll.x; accl.y += accll.y;
-  //   }
-  //   // TODO 6 do we need to sync here?
-  // }
-  //
-  // if (gtid < N)
-  //   acc[???] = accl; // TODO 7 Where do we store the result?
+  /*
+
+  __shared__ Vec2 shPosition[block_size];
+  __shared__ ???; // TODO 1 Declare a similar array for mass
+
+  const int gtid = ???; // TODO 2 calculate the thread index as normal
+  const Vec2 pi = (gtid < N) ? pos[gtid] : Vec2{0.0, 0.0}; // TODO 8 why use
+  these guards? Vec2 accl = {0.0, 0.0};
+
+  // Introduce a new loop over each tile
+  for (int tile_start = 0; tile_start < N; tile_start += block_size) {
+    // TODO 6 do we need to sync here?
+
+    // Each thread caches a position and mass from the current tile.
+    const int idx = ??? + threadIdx.x; // TODO 3 How do we calculate the
+    offset into the tile from tile_start? shPosition[???] = (idx < N) ?
+    pos[idx] : Vec2{0.0, 0.0}; // TODO 4 How do we index into our tile?
+    shMass[???] = (idx < N) ? mass[idx] : real(0.0);
+    // TODO 6 do we need to sync here?
+
+    // Each thread loops across the entire tile
+    for (int j = 0; j < block_size; j++) {
+      // Add the acceleration from jth particle to this
+      const Vec2 accll = calc_acc_pair(TODO, TODO, TODO, eps); // TODO 5 What
+      variables do we pass in here? accl.x += accll.x; accl.y += accll.y;
+    }
+    // TODO 6 do we need to sync here?
+  }
+
+  if (gtid < N)
+    acc[???] = accl; // TODO 7 Where do we store the result?
+
+  */
 }
 
 /// Calculate next position of every particle from old position and

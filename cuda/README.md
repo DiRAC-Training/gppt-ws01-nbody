@@ -4,11 +4,10 @@ You are given a working CUDA version of a direct-summation n-body simulation
 found in a single source file, `nbody.cu`. It is correct but unoptimised and
 includes some deliberate performance issues that you will have to find and fix.
 
-Your job is to find the bottlenecks using a profiler and fix them. You will
-make all of your changes in `nbody.cu`.
+Your job is to find bottlenecks using a profiler and implement related optimisations. You will
+make all of your changes in `nbody.cu`. You can compare to the solution in `nbody_tiled.cu` but we recommend you attempt tasks before checking the solution. Similarly, we recommend you struggle a little with tasks before using the hints.
 
-There are two tasks, split by a break. Task 1 is about measurement and the wins
-you can get without restructuring the hot loop. Task 2 restructures it.
+There are two main tasks. Task 1 is about measurement, tuning and data transfer optimisation. Task 2 involves implementing a tiling optimisation for better data reuse within a kernel.
 
 ## What you'll learn
 
@@ -17,7 +16,7 @@ By the end of this exercise you should be able to:
 - Identify data transfers and large kernels with Nsight Systems
 - Use Nsight Compute to explore how resource limits affect kernel performance
 - Tune a kernel's block size using profiling data
-- Implement a shared-memory tiling optimisation
+- Understand a shared-memory tiling optimisation
 
 ## Before you start
 
@@ -83,7 +82,7 @@ nsys stats report.nsys-rep
 1. Which kernel takes the most time? Take note of this for later tasks.
 2. Where in the main loop is there an obvious bottleneck?
 
-The bottleneck is most clearly seen in the timeline view of the Nsight Systems UI. See the [guidance document](guidance_on_nsys_ui.md) for more information on using this UI with CSD3. You can still identify it with just the text output from `nsys stats`.
+The bottleneck is most clearly seen in the timeline view of the Nsight Systems UI. See the guidance document for more information on using this UI with CSD3. You can still identify it with just the text output from `nsys stats`.
 
 <details>
 <summary>Hint</summary>
@@ -324,7 +323,17 @@ One key aspect to this algorithm is that it requires many threads to synchronise
 
 ---
 
-In `nbody.cu` there is a version of `calc_acc_tiled` with some of the code replaced with `???`. There are related TODO comments near each `???`. We will address these in turn:
+In `nbody.cu` there is a version of `calc_acc_tiled` with some of the code replaced with `???`. Comment this back in by removing the `/*` and `*/` before starting.
+
+There are related TODO comments near each `???`. They will walk you through:
+
+- Creating shared memory
+- Calculating correct indices into global and shared arrays
+- Copying data from global to shared memory
+- Processing data a tile at a time
+- Choosing appropriate sync points
+
+---
 
 **TODO 1: Declaring a shared array**
 
@@ -451,7 +460,7 @@ We also need a synchronisation point before we start copying a new tile. **Why?*
 Again, some threads will process faster than others, so if a fast thread were finished with processing, it would continue on into the next iteration of the tile loop and start copying the next tile's data into shared memory, *overwriting the existing data* and potentially affecting any slow threads that are still processing that tile. So we need a sync point *either* before the tile copy operation, or after processing, as in the solution:
 
 ```cpp
-for (int j = 0; j < THREADS_PER_BLOCK; j++) {
+for (int j = 0; j < block_size; j++) {
   // Add the acceleration from jth particle to this
   const Vec2 accll = calc_acc_pair(pi, shPosition[j], shMass[j], eps);
   accl.x += accll.x;
@@ -490,14 +499,12 @@ Phew! Let's now test this version with the unit tests:
 Run with:
 
 ```bash
-make nbody && ./nbody --unit_tests_only
+make nbody && ./nbody --only_unit_tests
 ```
 
 **Update the call to `calc_acc` in the main loop to fully transition to the tiled version.**
 
-You should check the output of `final.csv` with an output from the untiled version to ensure this optimisation hasn't changed the numerical values.
-
----
+You should check the output of `final.csv` with an output from the untiled version to ensure this optimisation hasn't changed the numerical values. If it shows no difference then hooray! You've correctly implemented tiling! Or it isn't actually running the correct kernel...
 
 Let's actually check shared memory is being used.
 
@@ -508,6 +515,10 @@ non-zero and consistent with your tile size × (`sizeof(Vec2)`
 + `sizeof(real)`). If it is zero, you are not running the kernel you think you
 are.
 
+---
+
+Before you compare this version to the non-tiled version, take a moment to consider what differences you expect to see in the profile. The aim of the tiling optimisation is to remove global memory accesses; how that might affect various metrics? Can you quantify the speedup you might expect?
+
 **Compare to a non-tiled profile. In which metrics can we see the effect of the tiling optimisation?**
 
 ---
@@ -517,9 +528,9 @@ Now let's tune the block and tile size. Since we made the block size a compile t
 We should be able to run a similar sweep as before:
 
 ```bash
-for n in 32 64 128 256 512 1024; do
-    make clean && make nbody BLOCK_SIZE=bs
-    ./nbody -n 100000 --quiet
+for bs in 32 64 128 256 512 1024; do
+    make clean && make nbody BLOCK_SIZE=$bs
+    ./nbody -n 100000 --quiet --disable_unit_tests
 done
 ```
 
@@ -533,7 +544,7 @@ Using `ncu` will give more accurate timing measurements and other metrics.
 
 Note that the problem size scales as `N_PARTICLES^2` so a useful value  is `runtime / N_PARTICLES^2`.
 
-## Task 3: Reflection
+## Task 2.5: Reflection
 
 In the previous task you implemented a tiling optimisation that reuses data to avoid extra memory loads. This is a complex optimisation so well done for getting it done!
 
