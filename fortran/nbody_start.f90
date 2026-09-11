@@ -237,27 +237,10 @@ contains
 
         call generate_random_star_system(n, pos, vel, mass)
 
-        ! TODO (Task 2a)
         call calc_acc(acc, pos, mass)
 
         pos_prev = pos - vel * dt - 0.5_wp * acc * dt**2
 
-        ! TODO (Task 2b): this is the main time-stepping loop. Every step it
-        ! calls calc_acc and advance_pos, which together launch several GPU
-        ! kernels -- and without a target data region here, *each* of those
-        ! kernels re-copies its arrays across PCIe on entry and exit, every
-        ! single step. Wrap the whole `do while` loop below in one
-        ! `!$omp target data` region that keeps pos, mass, pos_prev, acc and
-        ! pos_temp resident on the device for the entire loop. Pick the
-        ! map-type for each array based on how it is actually used across the
-        ! loop:
-        !   - pos is updated every step by the device, and the host needs
-        !     its final values afterwards (it's written to file below).
-        !   - mass and pos_prev are read by the device every step but never
-        !     written by it.
-        !   - acc and pos_temp are pure device scratch space: never given a
-        !     useful value by the host, and never read by the host.
-        ! (See the OpenMP map-type clauses: to, from, tofrom, alloc.)
         call system_clock(count_start, count_rate)
         
         do while (current_step < n_steps)
@@ -332,10 +315,6 @@ contains
         pos(1, :) = [0.0, 0.0]
         pos(2, :) = [1.0, 0.0]
 
-        ! TODO (Task 2c): this test calls calc_acc directly, outside of
-        ! run_sim, so it needs its own target data region -- add the same
-        ! kind of `!$omp target data` region you used for Task 2a around the
-        ! call below.
         call calc_acc(acc, pos, mass)
         epsilon = 1.1 * (2.0**(-0.48))
 
