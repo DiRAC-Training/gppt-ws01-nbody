@@ -6,7 +6,7 @@ else
 FLAGS:=-DSINGLE_PRECISION
 endif
 
-GPU_COMPILE:=nvfortran -cpp -mp=gpu -Minfo=mp -g
+GPU_COMPILE:=nvfortran -cpp -mp=gpu -Minfo=mp -g -O3
 # GPU_COMPILE:=flang -cpp -O3 -fopenmp -march=native --offload-arch=sm_80 -fopenmp-version=50
 
 cpu: nbody_start.f90 | build

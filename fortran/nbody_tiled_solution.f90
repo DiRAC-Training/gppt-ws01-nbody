@@ -106,7 +106,7 @@ contains
 
         integer, parameter :: TILE = 128
         integer :: n, num_teams_needed
-        integer :: team_id, tid, i, t, tile_start, j
+        integer :: team_id, tid, i, t, tile_i, j
         real(wp) :: epsilon, dx, dy, dist_sq, inv_dist_cube, ax, ay
         ! Team-private tile-staging arrays. Privatized (one instance per
         ! team, shared by that team's threads) by the `private()` clause on
@@ -123,26 +123,18 @@ contains
         !$omp&   map(to: pos, mass) map(tofrom: acc)
         !$omp distribute private(pos_s, mass_s)
         do team_id = 0, num_teams_needed - 1
-            !$omp parallel private(tid, i, ax, ay, t, tile_start, j, dx, dy, dist_sq, inv_dist_cube)
+            !$omp parallel private(tid, i, ax, ay, t, tile_i, j, dx, dy, dist_sq, inv_dist_cube)
             tid = omp_get_thread_num()
             i = team_id * TILE + tid + 1
             ax = 0.0_wp
             ay = 0.0_wp
 
             do t = 0, num_teams_needed - 1
-                tile_start = t * TILE
-
-                ! Cooperative load: each thread stages exactly one source
-                ! particle. Threads past the end of a partly-full final tile
-                ! pad with mass = 0, which contributes exactly nothing to
-                ! the sum below -- that's what lets every thread take the
-                ! same path through both barriers with no branch in the
-                ! inner loop. (See ../cuda/nbody_tiled.cu, Hint 4, for the
-                ! same reasoning in CUDA.)
-                if (tile_start + tid + 1 <= n) then
-                    pos_s(tid+1, 1) = pos(tile_start + tid + 1, 1)
-                    pos_s(tid+1, 2) = pos(tile_start + tid + 1, 2)
-                    mass_s(tid+1)   = mass(tile_start + tid + 1)
+                tile_i = t * TILE + tid + 1
+                if (tile_i <= n) then
+                    pos_s(tid+1, 1) = pos(tile_i, 1)
+                    pos_s(tid+1, 2) = pos(tile_i, 2)
+                    mass_s(tid+1)   = mass(tile_i)
                 else
                     pos_s(tid+1, 1) = 0.0_wp
                     pos_s(tid+1, 2) = 0.0_wp
@@ -150,9 +142,6 @@ contains
                 end if
                 !$omp barrier
 
-                ! The self-interaction term (source particle == i) is not
-                ! special-cased: it's still visited here with dx = dy = 0,
-                ! contributing exactly zero, same as in calc_acc.
                 if (i <= n) then
                     do j = 1, TILE
                         dx = pos_s(j,1) - pos(i,1)

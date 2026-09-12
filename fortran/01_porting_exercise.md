@@ -5,7 +5,7 @@ You are given a working, CPU-only n-body simulation in a single source file,
 runs entirely on the host. Your job is to accelerate it on an Nvidia GPU
 using OpenMP `target` offloading.
 
-You will make all of your changes in `nbody_start.f90`. `nbody.f90` in this
+You will make all of your changes in `nbody_start.f90`. `nbody_solution.f90` in this
 same directory is the finished solution — we recommend you attempt each task
 before checking it.
 
@@ -271,7 +271,7 @@ Note: Modern GPUs provide most of their FLOPS in tensor cores, which we are not 
 
 **Solution**
 
-See the solution in `nbody.f90`.
+See the solution in `nbody_solution.f90`.
 
 
 ### Reflection
@@ -285,3 +285,16 @@ Take a moment to note down, or discuss with someone nearby:
   wrong map type — it isn't a compile error, and it might not even be a
   crash. Given that, what's your own answer to "how do I know my mapping is
   right"?
+
+## Extension tasks
+
+- **Try `collapse`.** The pairwise loop in `calc_acc` is a perfect square
+  (`i` and `j` both run `1..n`), but you only parallelised the outer `i`
+  loop. Look up the `collapse` clause and see whether collapsing both loops
+  into a single parallel iteration space changes performance, and why (or
+  why not). Is this kernel limited by the number of parallel iterations
+  available, or by something else?
+- **Try `num_teams` / `thread_limit`.** These clauses let you control the
+  GPU launch configuration explicitly instead of leaving it to the
+  compiler. Sweep a few values and see whether you can beat the default.
+- **Switch between double and single precision with `make ... DOUBLE_PRECISION=true`.** How does the performance change?
