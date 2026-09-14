@@ -141,43 +141,59 @@ the solution if you get stuck. Try to struggle with the problem yourself, or wit
 **`real(wp) :: ??? ! TODO create a shared array for the mass tile`** — what
 should this declaration look like?
 
-**Hint 1**
+<details>
+<summary>Hint 1</summary>
 
 `pos_s` right above it creates one tile's worth of positions, one row per
 particle in the tile. `mass` needs the same kind of array.
 
-**Hint 2**
+</details>
+
+<details>
+<summary>Hint 2</summary>
 
 Mass has no x/y component, so this array only needs one dimension, sized
 `TILE` — same as the first dimension of `pos_s`.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 real(wp) :: mass_s(TILE)
 ```
 
+</details>
+
 ---
 
 **`num_teams_needed = ??? ! TODO how many tiles do we need to cover n?`**
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 Each team handles one tile of `TILE` particles. `n` won't usually divide
 evenly by `TILE`, so you need to round up, not down.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 num_teams_needed = (n + TILE - 1) / TILE
 ```
+
+</details>
 
 ---
 
 **`! TODO these omp directives are out of order! Fix them`** — this covers
 two problems at once: the directive order and where `!$omp parallel` opens.
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 Re-read the section on shared memory above: `target teams` is what *creates* the
 teams (CUDA blocks), so it has to be the outermost directive. `distribute`
@@ -185,7 +201,10 @@ then spreads the `do team_id` loop across those teams. `parallel` spreads
 work across the threads *within* one team — so it needs to open once per
 team, not once for the whole kernel.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 !$omp target teams num_teams(num_teams_needed) thread_limit(TILE)
@@ -199,149 +218,209 @@ Note that `calc_acc_tiled` is called from inside a data region so the `pos`,
 data movement required. Only the per-team staging arrays need handling here,
 using the `private()` clause.
 
+</details>
+
 ---
 
 **`i = ??? ! TODO calculate the global index for this thread`**
 
-**Hint 1**
+<details>
+<summary>Hint 1</summary>
 
 Team 0 owns particles `1..TILE`, team 1 owns `TILE+1..2*TILE`, and so on.
 Within team `team_id`, thread `tid` (0-indexed) owns which particle in that
 range?
 
-**Hint 2**
+</details>
+
+<details>
+<summary>Hint 2</summary>
 
 `team_id * TILE` gets you to the start of this team's block of particles;
 `tid` then offsets within it. Remember Fortran arrays are 1-indexed.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 i = team_id * TILE + tid + 1
 ```
+
+</details>
 
 ---
 
 **`! TODO do we need a barrier here?`** (the first one, right before loading
 the tile)
 
-**Hint 1**
+<details>
+<summary>Hint 1</summary>
 
 A barrier protects shared data from being read too early or overwritten too
 early. At this exact point in the loop, has anything unsafe happened to
 `pos_s`/`mass_s` yet?
 
-**Hint 2**
+</details>
+
+<details>
+<summary>Hint 2</summary>
 
 Look ahead to the *other two* barrier TODOs further down — one of them
 already guarantees "nobody starts the next tile's load until everyone's
 finished reading the previous tile." Does that barrier already cover this
 spot?
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 No barrier needed — delete the TODO comment and leave this blank. The
 barrier at the end of the loop body (see below) already ensures the tile
 isn't overwritten until every thread has finished reading it, which is the
 only thing that would make this spot unsafe.
 
+</details>
+
 ---
 
 **`tile_i = ??? ! TODO similar to i, calc global index for this thread's tile position`**
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 Same idea as computing `i`, but you're now indexing into tile `t` (the loop
 variable) instead of team `team_id`.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 tile_i = t * TILE + tid + 1
 ```
+
+</details>
 
 ---
 
 **`! TODO do we need a barrier here?`** (after loading the tile, before
 reading it)
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 Every thread in the team loads its own slot of `pos_s`/`mass_s` in
 parallel — some finish before others. What happens if a fast thread starts
 the accumulation loop below while a slower thread hasn't written its slot
 yet?
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 Yes — add `!$omp barrier` here.
+
+</details>
 
 ---
 
 **`dy = ??? ! TODO`**
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 Look at the line directly above it, computing `dx`.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 dy = pos_s(j,2) - pos(i,2)
 ```
 
+</details>
+
 ---
 
 **`ax = ax + dx * mass??? * inv_dist_cube ! TODO how to access mass within the tile?`**
 
-**Hint 1**
+<details>
+<summary>Hint 1</summary>
 
 You should access the *shared* mass array, `mass_s`, here, but which index to use?
 
-**Hint 2**
+</details>
+
+<details>
+<summary>Hint 2</summary>
 
 The index into the shared tile is `j`.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 ax = ax + dx * mass_s(j) * inv_dist_cube
 ay = ay + dy * mass_s(j) * inv_dist_cube
 ```
 
+</details>
+
 ---
 
 **`! TODO do we need a barrier here?`** (after accumulating from the tile,
 before looping back to load the next one)
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 Flip the question from the previous barrier: some threads may finish
 reading the tile in the accumulation loop before others. What happens if a
 fast thread jumps ahead to the next `t` iteration and starts overwriting
 `pos_s`/`mass_s` while a slower thread is still reading the current values?
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 Yes — add `!$omp barrier` here.
+
+</details>
 
 ---
 
 **`! TODO I'm worried this will access out-of-bounds. Should there be a guard?`**
 (just before `acc(i,1) = ax`)
 
-**Hint 1**
+<details>
+<summary>Hint 1</summary>
 
 `n` won't always be an exact multiple of `TILE`. In the last team, what does
 `i` look like for a thread whose `tid` runs past the number of real
 particles left?
 
-**Hint 2**
+</details>
+
+<details>
+<summary>Hint 2</summary>
 
 You already guarded the tile load (`if (tile_i <= n)`) and the accumulation
 loop (`if (i <= n)`) against this. This write needs the same treatment.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 ```fortran
 if (i <= n) then
@@ -349,6 +428,8 @@ if (i <= n) then
     acc(i,2) = ay
 end if
 ```
+
+</details>
 
 ---
 
@@ -386,7 +467,8 @@ Feel free to profile the solutions using:
 
 Comparing the two `ncu` profiles, you should notice something memory-related that distinguishes the tiled version.
 
-**Solution: Warp cycles**
+<details>
+<summary>Solution: Warp cycles</summary>
 
 **Non-tiled:**
 
@@ -418,7 +500,10 @@ Avg. Not Predicated Off Threads Per Warp                    27.39
 
 The number of cycles spent waiting has significantly decreased (by about the same factor as the decrease in overall runtime). This implies that our tiling worked! Fewer warps are now waiting on data accesses.
 
-**Solution: Occupancy**
+</details>
+
+<details>
+<summary>Solution: Occupancy</summary>
 
 **Non-tiled:**
 
@@ -459,6 +544,8 @@ Achieved Active Warps Per SM           warp        27.77
 Unfortunately, our occupancy has been limited due to the increase in register use. Were we optimising further, reducing register use would be a decent thing to explore next.
 
 Overall, the improvement in data reuse has balanced against more limited occupancy so we gain from this particular optimisation here.
+
+</details>
 
 ---
 

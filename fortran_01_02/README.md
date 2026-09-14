@@ -106,11 +106,14 @@ tests should still pass. The program is very likely **not faster yet**,
 possibly slower than the CPU baseline. That's expected, not a bug — see
 Task 2.
 
-**Hint**
+<details>
+<summary>Hint</summary>
 
 For each loop: add `!$omp target teams distribute parallel do` on the line
 directly above the loop, and `!$omp end target teams distribute parallel
 do` directly below it (after the matching `end do`/`enddo`).
+
+</details>
 
 ---
 
@@ -136,9 +139,12 @@ acc(:,:) = 0.0_wp
 
 **Why can't we write this while using OpenMP?**
 
-**Solution**
+<details>
+<summary>Solution</summary>
 
 OpenMP requires *loops*. We have to rewrite all slices as loops to add appropriate OpenMP directives to them.
+
+</details>
 
 ---
 
@@ -148,7 +154,8 @@ With no data directives, every `target` region you added in Task 1 performs data
 
 **Which directive handles data transfers in OpenMP?**
 
-**Solution**
+<details>
+<summary>Solution</summary>
 
 `!$omp target data map(...)`
 
@@ -158,13 +165,16 @@ This directive opens a region that keeps its mapped
 arrays resident on the device for as long as the region is open, regardless
 of how many `target` kernels run inside it.
 
+</details>
+
 ---
 
 We want to use the `target data` directive to ensure that data stays on the GPU as much as possible during the simulation.
 
 **Identify where you should put a `target data` directive to reduce data transfers associated with `calc_acc` and `advance_pos`**
 
-**Solution**
+<details>
+<summary>Solution</summary>
 
 Anywhere that `calc_acc` and `advance_pos` are called could be surrounded by `target data` directives, that is:
 
@@ -194,6 +204,8 @@ Notice here that we've deliberately placed the `target data` directive before th
 
 Since both `calc_acc` and `advance_pos` are entirely offloaded to the GPU, we want to ensure data stays on the GPU for the entire main loop, so we surround the loop with the `target data` region.
 
+</details>
+
 ---
 
 Now we must decide which variables to map and exactly how they should be mapped.
@@ -207,17 +219,24 @@ Recall the `map` clause in the `target data map(...)` directive can take the fol
 
 **Which variables must be mapped in the `target data` directive and which option should be used for each?**
 
-**Hint**
+<details>
+<summary>Hint 1</summary>
 
 The variables that should be mapped are all those used in the subroutines: `pos`, `mass`, `pos_prev`, `acc`, and `pos_temp`.
 
-**Hint**
+</details>
+
+<details>
+<summary>Hint 2</summary>
 
 Strictly, you could choose to use `map(tofrom: ...)` for every single variable here. This would work in this code and probably wouldn't impact performance much. However, in a more complex code where data transfers are intended to happen as part of the main loop, instead of only before and after, using `tofrom` for every variable could be a bottleneck. So let's practice finding the right option here.
 
 Try to consider which variables *need* to be copied in with `map(to: ...)`, which need to be copied out with `map(from: ...)` and which only need to be allocated with `map(alloc: ...)`. You may not need to use all these, and `tofrom` may also be useful.
 
-**Solution**
+</details>
+
+<details>
+<summary>Solution</summary>
 
 Our solution is:
 
@@ -226,6 +245,8 @@ Our solution is:
 ```
 
 `pos` is generated on the host as initial conditions so must be copied in, but is also dumped after the main loop so must also be copied out. `mass` and `pos_prev` are generated on the host but are not dumped so can be copied as just `to`. The other variables do not need to be copied at all and can be simply `alloc`ed.
+
+</details>
 
 ## Task 3: Confirm we're running on the GPU
 
@@ -269,9 +290,12 @@ Note: Modern GPUs provide most of their FLOPS in tensor cores, which we are not 
 
 **Implement `target data` directives around the uses of `calc_acc` and `advance_pos` in the unit tests and initial conditions setup**.
 
-**Solution**
+<details>
+<summary>Solution</summary>
 
 See the solution in `nbody_solution.f90`.
+
+</details>
 
 
 ### Reflection
@@ -288,13 +312,13 @@ Take a moment to note down, or discuss with someone nearby:
 
 ## Extension tasks
 
-- **Try `collapse`.** The pairwise loop in `calc_acc` is a perfect square
+- **Explore the `collapse` clause.** The pairwise loop in `calc_acc` is a perfect square
   (`i` and `j` both run `1..n`), but you only parallelised the outer `i`
   loop. Look up the `collapse` clause and see whether collapsing both loops
   into a single parallel iteration space changes performance, and why (or
   why not). Is this kernel limited by the number of parallel iterations
   available, or by something else?
-- **Try `num_teams` / `thread_limit`.** These clauses let you control the
+- **Explore `num_teams` / `thread_limit`.** These clauses let you control the
   GPU launch configuration explicitly instead of leaving it to the
   compiler. Sweep a few values and see whether you can beat the default.
 - **Switch between double and single precision with `make ... DOUBLE_PRECISION=true`.** How does the performance change?
