@@ -1,4 +1,4 @@
-# CUDA N-Body — Optimisation Exercise
+# CUDA N-Body: Optimisation Exercise
 
 You are given a working CUDA version of a direct-summation n-body simulation
 found in a single source file, `nbody.cu`. It is correct but unoptimised and
