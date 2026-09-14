@@ -152,7 +152,7 @@ With no data directives, every `target` region you added in Task 1 performs data
 
 `!$omp target data map(...)`
 
-`!$omp end target data map(...)`
+`!$omp end target data`
 
 This directive opens a region that keeps its mapped
 arrays resident on the device for as long as the region is open, regardless
@@ -241,7 +241,7 @@ Try the following:
   offload isn't actually happening for a `target` region.
 - You could even try profiling the code properly with:
     ```bash
-    nsys profile build/main_gpu -o report
+    nsys profile -o report build/main_gpu
     nsys stats -r cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum report.nsys-rep
     ```
 
