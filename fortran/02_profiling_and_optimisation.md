@@ -39,7 +39,7 @@ In the previous task, you will have seen the `CUDA GPU Kernel Summary` section:
       0.0          170,497         10      17,049.7      17,056.0      16,384       18,016        439.9  nvkernel_nbody_simulation_advance_pos__F1L224_15_
 ```
 
-**Note the name of the generated kernel corresponding to `calc_acc`.**
+**Note the name of the generated kernel corresponding to `calc_acc`.  The F1L* name might change in your solution as it indicates a line number**
 
 ---
 
