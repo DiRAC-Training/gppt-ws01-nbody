@@ -40,7 +40,7 @@ is O(N^2).
 
 Time integration is velocity-Verlet, which needs the previous position from
 `pos_prev`. `pos_temp` is scratch space used to shuffle `pos` into
-`pos_prev` after each update. `epsilon` is a softening length that stops the
+`pos_prev` after each update. You may be able to optimise this out. `epsilon` is a softening length that stops the
 force blowing up when two particles are nearly coincident.
 
 ### Build and run

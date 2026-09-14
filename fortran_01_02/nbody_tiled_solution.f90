@@ -434,9 +434,9 @@ program main
         iarg = iarg + 1
     end do
 
-    open(newunit=file_unit, file='trajectory.csv', status='replace', action='write', iostat=ios)
+    open(newunit=file_unit, file='final.csv', status='replace', action='write', iostat=ios)
     if (ios /= 0) then
-        print *, "Error opening trajectory.csv"
+        print *, "Error opening final.csv"
     end if
 
     if (seed_given) then

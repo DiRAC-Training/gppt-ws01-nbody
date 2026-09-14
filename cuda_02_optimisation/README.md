@@ -45,27 +45,6 @@ In order to check correctness, you will be comparing any new output to the origi
 make && ./nbody && mv final.csv final_og.csv
 ```
 
-### Visualising output
-
-You may find it useful to visualise the output of the simulation. We have provided a Python visualisation script in `../visualisation/plot.py` that can be used to render CSV outputs to PNG images:
-
-```bash
-../visualisation/plot.py *.csv
-```
-
-If the Python packages are not already available, see the README.md in the visualisation folder for instructions on getting this script running.
-
-There is also a video plotting tool that plots all CSVs in the current folder and outputs an MP4 animation of the simulation:
-
-```bash
-../visualisation/plot_video.sh
-```
-
-### WARNING: Timing can be tricky
-
-Do not rely **solely** on the wall-clock number the program prints on its own to
-decide whether a change helped. You are on a shared node, so your runtime will be affected by other users on the system.
-
 ## **Task 1a** - Identify a bottleneck with `nsys`
 
 **Try to identify potential bottlenecks in the main loop in `nbody.cu` before running the profiler.** Just from reading the code, can you get a sense of which kernels may dominate? Can you identify data transfers and synchronisation points that may need investigating?
@@ -597,12 +576,3 @@ Tiling is common but not the only use of shared memory. This is just one way of 
   further. Watch what it does to Registers Per Thread, and whether that starts
   limiting occupancy.
 - **Pad the data before tiling.** In order to access within the bounds of the data, the tiled kernel branches: `(gtid < N) ? pos[gtid] : Vec2{0.0, 0.0}`. You can avoid these kinds of branches by padding the input data with null data to contain *exactly* a multiple of the block size. This generally depends on the algorithm but we can achieve this here by padding the position and mass arrays with zeros.
-
-### References
-
-- Nyland, Harris and Prins,
-  [*Fast N-Body Simulation with CUDA*](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-31-fast-n-body-simulation-cuda),
-  GPU Gems 3 chapter 31 (NVIDIA, 2007).
-- Volkov,
-  [*Better Performance at Lower Occupancy*](https://www.nvidia.com/content/gtc-2010/pdfs/2238_gtc2010.pdf),
-  GTC 2010.
