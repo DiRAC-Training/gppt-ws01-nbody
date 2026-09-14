@@ -23,8 +23,6 @@ By the end of this exercise you should be able to:
 - Recognise when `target` regions require data transfers and implement them with `!$omp target data`
 - Choose the right OpenMP map type (`to`, `from`, `tofrom`, `alloc`) for a given array
 - Confirm that code is running on the GPU
-- Implement a shared-memory tiling optimisation using nested
-  `distribute`/`parallel` regions and team-private arrays
 
 ## Task 0: Understand the code
 
