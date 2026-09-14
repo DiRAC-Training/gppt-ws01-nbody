@@ -79,7 +79,7 @@ contains
 #ifdef TILED
     subroutine calc_acc_tiled(acc, pos, mass)
         use omp_lib, only: omp_get_thread_num
-        real(wp), intent(inout) :: acc(:,:)
+        real(wp), intent(out) :: acc(:,:)
         real(wp), intent(in) :: pos(:,:)
         real(wp), intent(in) :: mass(:)
 
@@ -97,8 +97,7 @@ contains
 
         ! TODO these omp directives are out of order! Fix them
         !$omp distribute private(pos_s, mass_s)
-        !$omp target teams num_teams(num_teams_needed) thread_limit(TILE) &
-        !$omp&   map(to: ???) map(tofrom: ???) ! TODO what needs mapped?
+        !$omp target teams num_teams(num_teams_needed) thread_limit(TILE)
         !$omp parallel private(tid, i, ax, ay, t, tile_i, j, dx, dy, dist_sq, inv_dist_cube)
         do team_id = 0, num_teams_needed - 1
             tid = omp_get_thread_num()

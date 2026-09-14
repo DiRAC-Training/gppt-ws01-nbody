@@ -175,10 +175,9 @@ num_teams_needed = (n + TILE - 1) / TILE
 ---
 
 **`! TODO these omp directives are out of order! Fix them`** — this covers
-three problems at once: the directive order, where `!$omp parallel` opens,
-and the `map()` clauses.
+two problems at once: the directive order and where `!$omp parallel` opens.
 
-**Hint 1**
+**Hint**
 
 Re-read the section on shared memory above: `target teams` is what *creates* the
 teams (CUDA blocks), so it has to be the outermost directive. `distribute`
@@ -186,35 +185,19 @@ then spreads the `do team_id` loop across those teams. `parallel` spreads
 work across the threads *within* one team — so it needs to open once per
 team, not once for the whole kernel.
 
-**Hint 2**
-
-The corrected skeleton (map clause left as `???` for the next hint):
-
-```fortran
-!$omp target teams num_teams(num_teams_needed) thread_limit(TILE) &
-!$omp&   map(to: ???) map(tofrom: ???)
-!$omp distribute private(pos_s, mass_s)
-do team_id = 0, num_teams_needed - 1
-    !$omp parallel private(tid, i, ax, ay, t, tile_i, j, dx, dy, dist_sq, inv_dist_cube)
-    tid = omp_get_thread_num()
-    ...
-```
-
-For the map clause: which arrays are only read on the GPU (`to`), and which
-is read *and* written back to the host (`tofrom`)?
-
 **Solution**
 
 ```fortran
-!$omp target teams num_teams(num_teams_needed) thread_limit(TILE) &
-!$omp&   map(to: pos, mass) map(tofrom: acc)
+!$omp target teams num_teams(num_teams_needed) thread_limit(TILE)
 !$omp distribute private(pos_s, mass_s)
 do team_id = 0, num_teams_needed - 1
     !$omp parallel private(tid, i, ax, ay, t, tile_i, j, dx, dy, dist_sq, inv_dist_cube)
 ```
 
-`pos` and `mass` are only ever read inside the kernel, so `to`. `acc` is
-written by every thread and needs to come back to the host, so `tofrom`.
+Note that `calc_acc_tiled` is called from inside a data region so the `pos`,
+`mass` and `acc` arrays are already on the device, so there is no additional
+data movement required. Only the per-team staging arrays need handling here,
+using the `private()` clause.
 
 ---
 

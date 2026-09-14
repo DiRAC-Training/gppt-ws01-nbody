@@ -100,7 +100,7 @@ contains
 #ifdef TILED
     subroutine calc_acc_tiled(acc, pos, mass)
         use omp_lib, only: omp_get_thread_num
-        real(wp), intent(inout) :: acc(:,:)
+        real(wp), intent(out) :: acc(:,:)
         real(wp), intent(in) :: pos(:,:)
         real(wp), intent(in) :: mass(:)
 
@@ -119,8 +119,7 @@ contains
         epsilon = 1.1_wp * (real(n, wp)**(-0.48_wp))
         num_teams_needed = (n + TILE - 1) / TILE
 
-        !$omp target teams num_teams(num_teams_needed) thread_limit(TILE) &
-        !$omp&   map(to: pos, mass) map(tofrom: acc)
+        !$omp target teams num_teams(num_teams_needed) thread_limit(TILE)
         !$omp distribute private(pos_s, mass_s)
         do team_id = 0, num_teams_needed - 1
             !$omp parallel private(tid, i, ax, ay, t, tile_i, j, dx, dy, dist_sq, inv_dist_cube)
