@@ -30,11 +30,7 @@ Vec2 sub(const Vec2 &v1, const Vec2 &v2) { return {v1.x - v2.x, v1.y - v2.y}; }
 Vec2 calc_acc_pair(Vec2 pi, Vec2 pj, real mj, real eps = 0.0) {
   const Vec2 r = sub(pj, pi);
   const real d = norm2(r) + eps * eps;
-#ifdef PRECISION_SINGLE
-  const real inv_d = rsqrtf(d); // only when real = float and not double
-#else
-  const real inv_d = 1.0 / sqrt(d); // the fallback when real = double
-#endif
+  const real inv_d = 1.0 / sqrt(d);
   const real accs = mj * inv_d * inv_d * inv_d;
   return {r.x * accs, r.y * accs};
 }
