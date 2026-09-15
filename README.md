@@ -6,6 +6,8 @@ is O(N^2). The time advancement is performed with a 2nd-order velocity-Verlet me
 
 Before running any exercises, you should `git clone <URL>` this repo to CSD3.
 
+**Important**: [Guidance on running on CSD3](https://github.com/DiRAC-Training/GPPT-WS01/blob/main/guidance_on_csd3.md)
+
 ## Porting exercises (Day 1)
 
 - [C++ CUDA Porting](https://github.com/DiRAC-Training/gppt-ws01-nbody/tree/main/cuda_01_introduction)
