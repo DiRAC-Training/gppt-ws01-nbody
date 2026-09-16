@@ -53,7 +53,7 @@ make && ./nbody && mv final.csv final_og.csv
 
 ```sh
 nsys profile -o report ./nbody
-nsys stats report.nsys-rep
+nsys stats -r cuda_api_sum,cuda_gpu_kern_sum,cuda_gpu_mem_time_sum report.nsys-rep
 ```
 
 **Inspect the output to help answer the questions:**

@@ -5,13 +5,6 @@ instructions are in [`nbody_exercise.md`](nbody_exercise.md). Learners work in
 `nbody.cu`; the other source variants are reference material for presenters and
 helpers and should not be presented as alternative starting points.
 
-## Files
-
-The repo contains the starter code in [`nbody.cu`](nbody.cu) and additionally
-[`nbody_naive.cu`](nbody_naive.cu) with solutions for task 1, and
-[`nbody_tiled.cu`](nbody_tiled.cu) for the solution of task 2. Learners are not
-expected to have these, they are for you only!
-
 ## Existing A100 measurements
 
 These figures were collected on a COSMA A100. They are curated results, not
